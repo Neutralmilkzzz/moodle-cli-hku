@@ -240,6 +240,50 @@ describe("answerQuizQuestion", () => {
     expect(deps.calls.at(-1)!.body.get("q4000:3_answer")).toBe("def f():\n    return 1 < 2");
   });
 
+  function multiFieldDeps() {
+    const multi = fixture("quiz-attempt-page-1.html")
+      .replace('<textarea id="q4000:3_answer_id" name="q4000:3_answer" rows="15" cols="60" class="form-control"></textarea>', '<input type="text" name="q4000:3_0_0" value=""><input type="text" name="q4000:3_1_0" value="">')
+      .replace("que essay manualgraded", "que formulas deferredfeedback");
+    const deps = fakeDeps({
+      "GET /mod/quiz/attempt.php": ({ url }) => {
+        const page = new URL(url).searchParams.get("page") ?? "0";
+        return { url, html: page === "1" ? multi : fixture("quiz-attempt-page-0.html") };
+      },
+      "POST /mod/quiz/processattempt.php": () => ({ url: `${ATTEMPT}&page=1`, html: saved(multi, 3) }),
+    });
+    return deps;
+  }
+
+  it("posts every field of a multi-field formulas question in display order", async () => {
+    const deps = multiFieldDeps();
+    const page = await getAttemptPage(deps, 900, 32, 1);
+    expect(page.questions[1]).toMatchObject({
+      number: "2",
+      kind: "fields",
+      fields: [
+        { name: "q4000:3_0_0", kind: "text", answer: "" },
+        { name: "q4000:3_1_0", kind: "text", answer: "" },
+      ],
+    });
+    await answerQuizQuestion(deps, { attemptId: 900, quizId: 32, question: "2", values: ["4", "32"] });
+    const post = deps.calls.at(-1)!;
+    expect(post.body.get("q4000:3_0_0")).toBe("4");
+    expect(post.body.get("q4000:3_1_0")).toBe("32");
+  });
+
+  it("accepts semicolon-separated values for a multi-field question", async () => {
+    const deps = multiFieldDeps();
+    await answerQuizQuestion(deps, { attemptId: 900, quizId: 32, question: "2", value: "4; 32" });
+    const post = deps.calls.at(-1)!;
+    expect(post.body.get("q4000:3_0_0")).toBe("4");
+    expect(post.body.get("q4000:3_1_0")).toBe("32");
+  });
+
+  it("rejects a multi-field answer with the wrong number of values", async () => {
+    const deps = multiFieldDeps();
+    await expect(answerQuizQuestion(deps, { attemptId: 900, quizId: 32, question: "2", value: "4" })).rejects.toThrow(/needs 2 values, got 1/u);
+  });
+
   it("leaves a cloze question to the browser instead of posting to a field that does not exist", async () => {
     const cloze = fixture("quiz-attempt-page-1.html")
       .replace('<textarea id="q4000:3_answer_id" name="q4000:3_answer" rows="15" cols="60" class="form-control"></textarea>', '<input type="text" name="q4000:3_sub1_answer" value="old"><input type="text" name="q4000:3_sub2_answer" value="">')
