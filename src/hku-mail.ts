@@ -66,6 +66,14 @@ export interface MailConnectionCheck {
   messages: number;
 }
 
+export interface MailboxInfo {
+  path: string;
+  name: string;
+  delimiter?: string;
+  specialUse?: string;
+  flags?: string[];
+}
+
 export class MailAuthRequiredError extends AuthError {
   constructor(message = "A 163 mailbox authorization code is required to read mail.") {
     super(message, "Run: hku mail auth login --account you@163.com");
@@ -215,12 +223,22 @@ async function withMailbox<T>(
   mailbox: string,
   callback: (client: ImapFlow) => Promise<T>,
 ): Promise<T> {
+  return withClient(account, password, async client => {
+    await client.mailboxOpen(mailbox);
+    return callback(client);
+  });
+}
+
+async function withClient<T>(
+  account: MailAccountConfig,
+  password: string,
+  callback: (client: ImapFlow) => Promise<T>,
+): Promise<T> {
   const client = createImapClient(account, password);
   let connected = false;
   try {
     await client.connect();
     connected = true;
-    await client.mailboxOpen(mailbox);
     return await callback(client);
   } catch (error) {
     if (error instanceof MailAuthRequiredError) throw error;
@@ -273,6 +291,27 @@ export async function verifyMailConnection(
   const account = await requireAccount(options);
   const password = await resolvePassword(options, account);
   return verifyAccountConnection(account, password, options.mailbox);
+}
+
+export async function listMailboxes(
+  options: MailAuthOptions & { password?: string } = {},
+): Promise<MailboxInfo[]> {
+  const account = await requireAccount(options);
+  const password = await resolvePassword(options, account);
+  return withClient(account, password, async client => {
+    const listed = await client.list();
+    const mailboxes: MailboxInfo[] = [];
+    for (const mailbox of listed) {
+      mailboxes.push({
+        path: mailbox.path,
+        name: mailbox.name,
+        ...(mailbox.delimiter === undefined ? {} : { delimiter: mailbox.delimiter }),
+        ...(mailbox.specialUse === undefined ? {} : { specialUse: mailbox.specialUse }),
+        ...(mailbox.flags === undefined ? {} : { flags: [...mailbox.flags] }),
+      });
+    }
+    return mailboxes.sort((left, right) => left.path.localeCompare(right.path));
+  });
 }
 
 export async function loginMail(options: MailLoginOptions): Promise<MailStatus> {

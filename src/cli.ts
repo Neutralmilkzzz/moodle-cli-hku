@@ -106,6 +106,7 @@ import {
 } from "./hku-mail-core.js";
 import {
   fetchRecentMail,
+  listMailboxes,
   loginMail,
   logoutMail,
   mailAuthStatus,
@@ -1228,6 +1229,20 @@ function addHkuCommands(
     });
     return { raw, digest: aggregateMail(raw, { hours, threadLimit: 10 }) };
   }
+
+  addOutputOptions(
+    mail
+      .command("folders")
+      .description("List the IMAP folders available in the saved 163 account."),
+  ).action(async (options: OutputCommandOptions) => {
+    const folders = await listMailboxes({ homeDir: io.homeDir, env: io.env });
+    await runtime.output(
+      { folders, total: folders.length },
+      () => folders.map(folder => `${folder.path}${folder.specialUse ? `  (${folder.specialUse})` : ""}`).join("\n"),
+      options,
+      false,
+    );
+  });
 
   addOutputOptions(
     mail
