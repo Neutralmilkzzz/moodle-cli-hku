@@ -41,9 +41,7 @@ import {
   type Theme,
   type Ui,
 } from "@bunizao/cli-kit";
-import { realpathSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { createMoodleClient, type MoodleClient } from "./client.js";
 import { refreshLatestVersion, runUpdate, startupUpdateNotice } from "./update-check.js";
 import { isNewerVersion } from "./update-core.js";
@@ -101,6 +99,27 @@ import { looksLikeUrl, resolveTopLevelUrl } from "./url-resolver.js";
 import { createMcpCommandService, type McpCommandOutput, type McpCommandService } from "./mcp/cli.js";
 import { describeProgram } from "./command-contract.js";
 import { ONBOARDING_COPY } from "./mcp/deployment/onboarding.js";
+import {
+  aggregateMail,
+  formatMailDigest,
+  formatMailList,
+} from "./hku-mail-core.js";
+import {
+  fetchRecentMail,
+  loginMail,
+  logoutMail,
+  mailAuthStatus,
+  MailAuthRequiredError,
+  verifyMailConnection,
+} from "./hku-mail.js";
+import {
+  HkuLibraryClient,
+  LibraryAuthRequiredError,
+  loginLibrary,
+  resolveLibraryCookies,
+  type LibraryBooking,
+  type LibraryGrid,
+} from "./hku-library.js";
 
 interface CliIO {
   stdout?: NodeJS.WriteStream | { write(chunk: string): boolean };
@@ -112,6 +131,7 @@ interface CliIO {
   homeDir?: string;
   rootArgs?: string[];
   mcpService?: McpCommandService;
+  programName?: "moodle" | "hku";
 }
 
 interface Runtime {
@@ -151,8 +171,14 @@ const NOUNS: readonly NounSpec[] = [
 export function buildProgram(io: CliIO = {}): Command {
   const stdout = io.stdout ?? process.stdout;
   const stderr = io.stderr ?? process.stderr;
-  const program = createProgram({ name: "moodle", version: VERSION, description: MOODLE_TAGLINE });
-  banner(program, MOODLE_WORDMARK);
+  const programName = io.programName ?? "moodle";
+  const hku = programName === "hku";
+  const program = createProgram({
+    name: programName,
+    version: VERSION,
+    description: hku ? "HKU CLI for Moodle, library bookings and 163 mail digests." : MOODLE_TAGLINE,
+  });
+  banner(program, hku ? HKU_WORDMARK : MOODLE_WORDMARK);
   program.configureOutput({
     writeOut: (text) => stdout.write(text),
     writeErr: (text) => stderr.write(text),
@@ -236,7 +262,7 @@ export function buildProgram(io: CliIO = {}): Command {
       const format = outputFormat(merged, stdout);
       const human = format === "table" ? formatter() : "";
       const text = format === "table"
-        ? `${human}${!hints || human.includes("Try  ") ? "" : `\n\n${tryLines(["moodle due", "moodle units", "moodle --help"])}`}\n`
+        ? `${human}${!hints || human.includes("Try  ") ? "" : `\n\n${tryLines(hku ? ["hku mail digest", "hku library rooms", "hku units"] : ["moodle due", "moodle units", "moodle --help"])}`}\n`
         : format === "json"
           ? `${JSON.stringify(JSON.parse(render(data, { format, fields: parseFields(data, merged.fields) })), null, merged.pretty ? 2 : undefined)}\n`
           : render(data, { format, fields: parseFields(data, merged.fields) });
@@ -1051,16 +1077,359 @@ export function buildProgram(io: CliIO = {}): Command {
   });
   skills.command("add").description("Install the published skill through npx skills add.").allowUnknownOption(true).action((_options, command) => installSkill(command.args));
 
-  for (const [title, names] of Object.entries(HELP_SECTIONS)) {
+  if (hku) addHkuCommands(program, runtime, io, human);
+
+  const helpSections = hku
+    ? { "HKU services": ["mail", "library"], ...HELP_SECTIONS }
+    : HELP_SECTIONS;
+  for (const [title, names] of Object.entries(helpSections)) {
     // Placed in the order the list names them: that order is the help page.
     for (const name of names) for (const command of program.commands) if (command.name() === name) helpSection(command, title);
   }
-  examples(program, [
-    "moodle  # today: due items, alerts and news",
-    "moodle UNIT grades",
-    "moodle submit UNIT \"Assignment 2\" report.pdf",
-  ]);
+  examples(program, hku
+    ? [
+        "hku mail auth login --account you@163.com",
+        "hku mail digest --hours 24",
+        "hku library locations",
+        "hku library rooms --location Chi Wah --type \"Study Room\"",
+        "hku due",
+      ]
+    : [
+        "moodle  # today: due items, alerts and news",
+        "moodle UNIT grades",
+        "moodle submit UNIT \"Assignment 2\" report.pdf",
+      ]);
   return program;
+}
+
+function addHkuCommands(
+  program: Command,
+  runtime: Runtime,
+  io: CliIO,
+  isHuman: () => boolean,
+): void {
+  const mail = program.command("mail").description("Read and aggregate mail delivered to a 163 mailbox through IMAP.").summary("Mail digest through 163 IMAP");
+  const mailAuth = mail.command("auth").description("Manage the 163 IMAP account used for mail.");
+
+  addOutputOptions(
+    mailAuth
+      .command("login")
+      .description("Verify and save a 163 mail account using its IMAP client authorization code.")
+      .option("--account <email>", "163 mail address, for example you@163.com.")
+      .option("--host <host>", "IMAP host.", "imap.163.com")
+      .option("--port <number>", "IMAP SSL port.", parsePositiveInt, 993),
+  ).action(async (options: OutputCommandOptions & {
+    account?: string;
+    host?: string;
+    port?: number;
+  }) => {
+    const account = options.account?.trim() || io.env?.HKU_MAIL_ACCOUNT?.trim();
+    if (!account) {
+      throw new UsageError("A 163 mail address is required. Run: hku mail auth login --account you@163.com");
+    }
+    const stdin = io.stdin ?? process.stdin;
+    const password = io.env?.HKU_MAIL_PASSWORD?.trim()
+      || io.env?.HKU_163_AUTH_CODE?.trim()
+      || (stdin.isTTY
+        ? await readSecretLine(
+          stdin,
+          (io.stderr ?? process.stderr) as NodeJS.WritableStream,
+          "163 客户端授权码（不是登录密码）: ",
+        )
+        : "");
+    if (!password) {
+      throw new MailAuthRequiredError(
+        "No 163 authorization code was provided. Set HKU_MAIL_PASSWORD or run the command in an interactive terminal.",
+      );
+    }
+    const status = await loginMail({
+      homeDir: io.homeDir,
+      env: io.env,
+      account,
+      password,
+      host: options.host,
+      port: options.port,
+    });
+    await runtime.output(
+      status,
+      () => `Connected to 163 IMAP as ${status.account ?? "unknown account"}\nINBOX: ${status.messages ?? "?"} messages\nCredentials saved locally.`,
+      options,
+      false,
+    );
+  });
+
+  addOutputOptions(
+    mailAuth
+      .command("status")
+      .description("Show the saved 163 account and verify the IMAP connection.")
+      .option("--no-verify", "Only inspect local configuration; do not connect."),
+  ).action(
+    async (options: OutputCommandOptions & { verify?: boolean }) => {
+      const status = await mailAuthStatus({ homeDir: io.homeDir, env: io.env });
+      if (status.signed_in && options.verify !== false) {
+        try {
+          const check = await verifyMailConnection({ homeDir: io.homeDir, env: io.env });
+          status.verified = true;
+          status.mailbox = check.mailbox;
+          status.messages = check.messages;
+        } catch (error) {
+          status.verified = false;
+          status.error = error instanceof Error ? error.message : String(error);
+        }
+      }
+      await runtime.output(
+        status,
+        () => status.signed_in
+          ? status.verified === false
+            ? `Saved account: ${status.account}\nConnection failed: ${status.error ?? "unknown error"}`
+            : status.verified === true
+              ? `Connected as ${status.account} via ${status.host}:${status.port}\nMailbox: ${status.mailbox ?? "not checked"}${status.messages === undefined ? "" : ` (${status.messages} messages)`}`
+              : `Saved account: ${status.account} via ${status.host}:${status.port}\nRun with verification enabled, or use --no-verify to skip the network check.`
+          : status.account
+            ? `Saved account ${status.account} has no authorization code.\nRun: hku mail auth login --account ${status.account}`
+            : "No 163 mail account is configured.\nRun: hku mail auth login --account you@163.com",
+        options,
+        false,
+      );
+    },
+  );
+
+  addOutputOptions(
+    mutating(mailAuth.command("logout").description("Remove the saved 163 account and authorization code.")),
+  ).action(async (options: OutputCommandOptions) => {
+    const human = isHuman();
+    if (!program.opts().dryRun && !await confirm(
+      { summary: "Remove the saved 163 account and local authorization code." },
+      { yes: Boolean(program.opts().yes), dryRun: false, interactive: human },
+    )) return;
+    if (!program.opts().dryRun) await logoutMail({ homeDir: io.homeDir, env: io.env });
+    await runtime.output(
+      { signed_in: false, dry_run: Boolean(program.opts().dryRun) },
+      () => program.opts().dryRun ? "Would remove the saved 163 mail credentials." : "Removed the saved 163 mail credentials.",
+      options,
+      false,
+    );
+  });
+
+  async function recentMail(options: OutputCommandOptions & {
+    hours?: number;
+    limit?: number;
+    mailbox?: string;
+    folder?: string;
+  }) {
+    const hours = options.hours ?? 24;
+    const raw = await fetchRecentMail({
+      homeDir: io.homeDir,
+      env: io.env,
+      hours,
+      limit: options.limit ?? 2000,
+      mailbox: options.mailbox ?? options.folder,
+    });
+    return { raw, digest: aggregateMail(raw, { hours, threadLimit: 10 }) };
+  }
+
+  addOutputOptions(
+    mail
+      .command("recent")
+      .description("List every 163 mailbox message received in the selected time window.")
+      .option("--hours <number>", "Hours to look back.", parsePositiveInt, 24)
+      .option("--limit <number>", "Maximum messages to retrieve.", parsePositiveInt, 2000)
+      .option("--mailbox <name>", "Mailbox to read.", "INBOX")
+      .option("--folder <name>", "Alias for --mailbox."),
+  ).action(async (options: OutputCommandOptions & { hours?: number; limit?: number; mailbox?: string; folder?: string }) => {
+    const { digest } = await recentMail(options);
+    await runtime.output(
+      digest,
+      () => formatMailList(digest),
+      options,
+      false,
+    );
+  });
+
+  addOutputOptions(
+    mail
+      .command("digest")
+      .description("Aggregate recent mail by urgency, sender, domain, thread and category.")
+      .option("--hours <number>", "Hours to look back.", parsePositiveInt, 24)
+      .option("--limit <number>", "Maximum messages to retrieve.", parsePositiveInt, 2000)
+      .option("--mailbox <name>", "Mailbox to read.", "INBOX")
+      .option("--folder <name>", "Alias for --mailbox."),
+  ).action(async (options: OutputCommandOptions & { hours?: number; limit?: number; mailbox?: string; folder?: string }) => {
+    const { digest } = await recentMail(options);
+    await runtime.output(digest, () => formatMailDigest(digest), options, false);
+  });
+
+  const library = program.command("library").description("Query HKU library locations, availability and your bookings.").summary("HKU library bookings");
+  const libraryAuth = library.command("auth").description("Manage the HKU library browser session.");
+
+  addOutputOptions(
+    libraryAuth
+      .command("login")
+      .description("Open Microsoft Edge, complete HKU sign-in and save the booking session."),
+  ).action(async (options: OutputCommandOptions) => {
+    (io.stderr ?? process.stderr).write("A Microsoft Edge window will open. Complete HKU sign-in and MFA there.\n");
+    const result = await loginLibrary({ homeDir: io.homeDir });
+    await runtime.output(
+      result,
+      () => `HKU library session saved (${result.cookies} cookies)\n${result.cookie_path}`,
+      options,
+      false,
+    );
+  });
+
+  addOutputOptions(libraryAuth.command("status").description("Check whether the saved HKU library session can read the booking grid.")).action(
+    async (options: OutputCommandOptions) => {
+      const cookies = await resolveLibraryCookies({ homeDir: io.homeDir });
+      if (!cookies.length) throw new LibraryAuthRequiredError();
+      const authenticated = await new HkuLibraryClient({ cookies, fetchImpl: io.fetchImpl }).isAuthenticated();
+      await runtime.output(
+        { authenticated, cookies: cookies.length },
+        () => authenticated ? "HKU library session is valid." : "HKU library session is expired. Run: hku library auth login",
+        options,
+        false,
+      );
+      if (!authenticated) process.exitCode = 3;
+    },
+  );
+
+  async function libraryClient(): Promise<HkuLibraryClient> {
+    const cookies = await resolveLibraryCookies({ homeDir: io.homeDir });
+    if (!cookies.length) {
+      throw new LibraryAuthRequiredError(
+        "No HKU library cookies were found in the saved session or Microsoft Edge.",
+      );
+    }
+    return new HkuLibraryClient({ cookies, fetchImpl: io.fetchImpl });
+  }
+
+  addOutputOptions(library.command("locations").description("List bookable HKU library locations.")).action(
+    async (options: OutputCommandOptions) => {
+      const locations = await (await libraryClient()).locations();
+      await runtime.output(
+        { locations, total: locations.length },
+        () => locations.map(option => `${option.value}  ${option.text}`).join("\n"),
+        options,
+        false,
+      );
+    },
+  );
+
+  addOutputOptions(
+    library
+      .command("rooms")
+      .description("List available library rooms and sessions for a location and date.")
+      .option("--location <name>", "Library location; omit to scan all locations.")
+      .option("--type <name>", "Facility type, for example 'Study Room'.")
+      .option("--date <date>", "Date shown by the library site, usually YYYY-MM-DD.")
+      .option("--all", "Include rooms with no free sessions.")
+      .option("--urls", "Include the NewBooking.aspx link for every free session."),
+  ).action(async (options: OutputCommandOptions & {
+    location?: string;
+    type?: string;
+    date?: string;
+    all?: boolean;
+    urls?: boolean;
+  }) => {
+    const grids = await (await libraryClient()).rooms({
+      location: options.location,
+      facilityType: options.type,
+      date: options.date,
+      all: options.all,
+    });
+    if (!options.urls) {
+      for (const grid of grids) {
+        for (const room of grid.rooms) {
+          for (const slot of room.slots) slot.bookingUrl = null;
+        }
+      }
+    }
+    await runtime.output(
+      { grids, total: grids.length },
+      () => formatLibraryGrids(grids, Boolean(options.all), Boolean(options.urls)),
+      options,
+      false,
+    );
+  });
+
+  addOutputOptions(library.command("bookings").description("Show your HKU library booking records.")).action(
+    async (options: OutputCommandOptions) => {
+      const bookings = await (await libraryClient()).bookings();
+      await runtime.output(
+        { bookings, total: bookings.length },
+        () => formatLibraryBookings(bookings),
+        options,
+        false,
+      );
+    },
+  );
+
+  addOutputOptions(
+    mutating(
+      library
+        .command("book")
+        .description("Reserve one free slot from a library rooms --urls result.")
+        .argument("<slot-url>", "NewBooking.aspx URL from booking.lib.hku.hk")
+        .option("--description <text>", "Optional booking description."),
+    ),
+  ).action(async (slotUrl: string, options: OutputCommandOptions & { description?: string }) => {
+    const client = await libraryClient();
+    if (program.opts().dryRun) {
+      await runtime.output(
+        { planned: true, slot_url: slotUrl },
+        () => `Would reserve this library slot:\n${slotUrl}`,
+        options,
+        false,
+      );
+      return;
+    }
+    const human = isHuman();
+    if (!program.opts().yes && !human) {
+      throw new UsageError("Library booking requires --yes when stdin is not interactive.", "Run with --dry-run first.");
+    }
+    if (!await confirm(
+      { summary: `Reserve this HKU library slot?\n${slotUrl}` },
+      { yes: Boolean(program.opts().yes), dryRun: false, interactive: human },
+    )) return;
+    const result = await client.bookSlot(slotUrl, options.description ?? "");
+    await runtime.output(
+      result,
+      () => [
+        `Booking flow: ${result.steps.join(" -> ")}`,
+        ...(result.bookings.length
+          ? ["", "Current bookings:", ...result.bookings.map(booking => `- ${booking.start} -> ${booking.end} | ${booking.location} ${booking.floor} | ${booking.facility} [${booking.status}]`)]
+          : ["", result.text]),
+      ].join("\n"),
+      options,
+      false,
+    );
+  });
+}
+
+function formatLibraryGrids(grids: LibraryGrid[], includeAll: boolean, includeUrls: boolean): string {
+  if (!grids.length) return "No bookable rooms were found.";
+  return grids.map(grid => {
+    const rooms = includeAll
+      ? grid.rooms
+      : grid.rooms.filter(room => room.availableSessions.length);
+    const lines = [`${grid.location} / ${grid.facilityType} / ${grid.date}`];
+    for (const room of rooms) {
+      const sessions = room.availableSessions.length ? room.availableSessions.join(", ") : "-";
+      lines.push(`  ${room.floor.padEnd(8)} ${room.name.padEnd(34)} ${sessions}`);
+      if (includeUrls) {
+        for (const slot of room.slots.filter(value => value.available && value.bookingUrl)) {
+          lines.push(`    ${slot.session}  ${slot.bookingUrl}`);
+        }
+      }
+    }
+    return lines.join("\n");
+  }).join("\n\n");
+}
+
+function formatLibraryBookings(bookings: LibraryBooking[]): string {
+  if (!bookings.length) return "No library bookings found.";
+  return bookings.map(booking =>
+    `${booking.start} -> ${booking.end} | ${booking.location} ${booking.floor} | ${booking.facility} [${booking.status}]`,
+  ).join("\n");
 }
 
 // Grouped the way `gh` does: what a person reaches for daily, then the rest, then what only an agent runs.
@@ -1069,6 +1438,11 @@ const HELP_SECTIONS: Readonly<Record<string, readonly string[]>> = {
   "Additional commands": ["sync", "user", "todo", "alerts", "overview", "download", "auth", "doctor", "coverage", "completion", "uninstall"],
   "Agent commands": ["mcp", "commands", "skills"],
 };
+
+const HKU_WORDMARK = String.raw` _   _ _  __ _   _
+| | | | |/ /| | | |
+| |_| | ' / | |_| |
+ \___/|_|\_\ \___/`;
 
 export async function runCli(argv = process.argv, io: CliIO = {}): Promise<number> {
   const stderr = io.stderr ?? process.stderr;
@@ -1341,21 +1715,4 @@ function queryMatches(text: string, query: string): boolean {
   const haystack = text.toLowerCase().split(/\s+/).join(" ");
   const needle = query.toLowerCase().split(/\s+/).join(" ");
   return needle ? haystack.includes(needle) || needle.split(" ").every((token) => haystack.includes(token)) : true;
-}
-
-function pathsReferToSameFile(moduleUrl: string, executable: string | undefined): boolean {
-  if (!executable) return false;
-  try {
-    return realpathSync(fileURLToPath(moduleUrl)) === realpathSync(executable);
-  } catch {
-    return false;
-  }
-}
-
-const isMain = (import.meta as ImportMeta & { main?: boolean }).main === true || pathsReferToSameFile(import.meta.url, process.argv[1]);
-if (isMain) {
-  runCli().then((code) => {
-    // A command that ran fine but reported a failure (doctor) sets its own code.
-    process.exitCode = code || process.exitCode;
-  });
 }

@@ -1,10 +1,11 @@
 {
-  "name": "moodle-cli",
+  "name": "moodle-cli-hku",
   "version": "0.10.0",
-  "description": "Moodle for terminals and AI agents: deadlines, grades, files, feedback and quiz reviews from your browser session, plus a private MCP server on Cloudflare",
+  "description": "HKU CLI for Moodle, 163 mail digests and library room bookings.",
   "license": "MIT",
   "type": "module",
   "bin": {
+    "hku": "dist/hku.js",
     "moodle": "dist/moodle.js"
   },
   "files": [
@@ -17,7 +18,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc --noEmit && tsup && npm run build:worker && rm -f dist/.gitignore && node scripts/check-shipped-vocabulary.mjs",
+    "build": "tsc --noEmit && tsup && npm run build:worker && node -e \"require('node:fs').rmSync('dist/.gitignore',{force:true})\" && node scripts/check-shipped-vocabulary.mjs",
     "build:worker": "tsup --config tsup.worker.config.ts && node scripts/check-worker-bundle.mjs",
     "bin:smoke": "bun scripts/smoke-standalone.mjs",
     "check": "tsc --noEmit",
@@ -37,12 +38,16 @@
     "@bunizao/cli-kit": "^0.6.0",
     "@steipete/sweet-cookie": "^0.4.0",
     "commander": "^13.1.0",
+    "imapflow": "^2.5.4",
+    "mailparser": "^3.9.44",
     "node-html-parser": "^7.0.1",
+    "tough-cookie": "^6.0.2",
     "yaml": "^2.8.0",
     "zod": "^4.0.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
+    "@types/mailparser": "^3.9.0",
     "@types/node": "^24.0.10",
     "tsup": "^8.5.0",
     "typescript": "^7.0.2",
@@ -54,12 +59,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/bunizao/moodle-cli.git"
+    "url": "git+https://github.com/Neutralmilkzzz/moodle-cli-hku.git"
   },
   "bugs": {
-    "url": "https://github.com/bunizao/moodle-cli/issues"
+    "url": "https://github.com/Neutralmilkzzz/moodle-cli-hku/issues"
   },
-  "homepage": "https://github.com/bunizao/moodle-cli#readme",
+  "homepage": "https://github.com/Neutralmilkzzz/moodle-cli-hku#readme",
   "overrides": {
     "tsup": {
       "esbuild": "^0.28.1"

@@ -9,7 +9,7 @@ Never assume code patterns or ask for ids; `moodle units` shows the vocabulary.
 
 Pipes emit compact JSON; `--json` forces it, `--pretty` indents it.
 Ambiguity returns `candidates`: pick or refine, never guess.
-Lists report `total`; narrow or page when more exist. Quote ISO dates.
+Lists report `total`; narrow or page when more exist.
 Never expose cookies or tokens. Download or submit only when asked; dry-run submit first. `--final` cannot be undone.
 Sign-in trouble: `moodle doctor`; remote expiry: `moodle mcp login`.
 Exact syntax: `moodle commands --json` or [reference](references/command-reference.md).

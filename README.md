@@ -16,12 +16,78 @@ Let it keep up with deadlines and grades, fetch course files, and search forum d
 
 ## Quick links
 
+- [HKU CLI: Moodle, mail and library](#hku-cli-moodle-mail-and-library)
 - [Set up with your agent](#start-with-your-agent)
 - [Install and sign in manually](#install-and-sign-in-manually)
 - [Study Boooooooooost](#study-boooooooooost)
 - [Connect web AI through a private MCP server](#remote-mcp-for-web-ai)
 - [Developer and agent reference](#for-developers-and-agents)
 - [Contributing](#contributing)
+
+## HKU CLI: Moodle, mail and library
+
+This fork keeps the complete `moodle` command and adds an `hku` entry point for
+your HKU day-to-day services:
+
+```bash
+npm install
+npm run build
+
+# Moodle, unchanged
+node dist/hku.js due --days 7
+node dist/hku.js grades
+
+# Mail forwarded from HKU Outlook to a 163 mailbox
+node dist/hku.js mail digest --hours 24
+
+# HKU library availability and bookings
+node dist/hku.js library locations
+node dist/hku.js library rooms --location "Chi Wah" --type "Study Room" --urls
+node dist/hku.js library bookings
+```
+
+### Mail through 163 IMAP
+
+SMTP sends mail; it cannot read a mailbox. This fork therefore reads the 163
+inbox over TLS IMAP (`imap.163.com:993`). Keep the HKU-to-163 forwarding rule
+active, then:
+
+1. In 163 webmail, open **Settings → POP3/SMTP/IMAP**.
+2. Enable **IMAP/SMTP service**.
+3. Generate a **client authorization code**. This is not the 163 login password.
+4. Save it locally with the hidden prompt:
+
+```bash
+node dist/hku.js mail auth login --account you@163.com
+node dist/hku.js mail auth status
+```
+
+For automation, pass the code through `HKU_MAIL_PASSWORD` instead of argv:
+
+```bash
+$env:HKU_MAIL_PASSWORD = "YOUR_163_AUTHORIZATION_CODE"
+node dist/hku.js mail digest --hours 24 --json
+```
+
+The account metadata and authorization code are stored in
+`~/.config/hku-cli/mail-account.json` and `mail-secret.json` with owner-only
+permissions. `hku mail recent` lists every message in the rolling window;
+`hku mail digest` groups them by urgency, sender, domain, thread and category.
+
+### Library booking
+
+Library commands reuse the browser session you already use for HKU SSO:
+
+```bash
+node dist/hku.js library auth login
+node dist/hku.js library auth status
+node dist/hku.js library rooms --location "Chi Wah" --type "Study Room" --date 2026-10-20 --urls
+node dist/hku.js library book "<NewBooking.aspx URL>" --dry-run
+node dist/hku.js library book "<NewBooking.aspx URL>" --yes
+```
+
+`library book` accepts only `NewBooking.aspx` URLs from
+`booking.lib.hku.hk`, requires confirmation, and supports `--dry-run`.
 
 ## For users
 
