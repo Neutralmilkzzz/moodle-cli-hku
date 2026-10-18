@@ -71,7 +71,7 @@ describe("HKU mail aggregation", () => {
   it("parses an RFC 822 message from the 163 mailbox", async () => {
     const message = await parseMailSource([
       "From: HKU Moodle <moodle@hku.hk>",
-      "To: Student <18301713463@163.com>",
+      "To: Student <student@163.com>",
       "Subject: Moodle assignment due",
       "Date: Sat, 18 Oct 2026 09:00:00 +0800",
       "Message-ID: <m1@hku.hk>",
