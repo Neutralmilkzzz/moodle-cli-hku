@@ -1191,6 +1191,7 @@ function addHkuCommands(
         options,
         false,
       );
+      if (status.verified === false) process.exitCode = 3;
     },
   );
 
