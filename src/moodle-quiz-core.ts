@@ -435,6 +435,16 @@ function splitFieldAnswers(value: string): string[] {
 }
 
 function encodeAnswer(deps: QuizDeps, form: ParsedForm, question: AttemptQuestion, value: string, values?: string[]): Field[] {
+  if (question.kind === "info") throw deps.usage(`Question ${question.number} is an information block; it takes no answer.`);
+  if (question.kind !== "fields" && values !== undefined) {
+    if (values.length !== 1) {
+      throw deps.usage(
+        `Question ${question.number} takes exactly one --value, not ${values.length}.`,
+        question.kind === "multi" ? "Pass multiple options in one value, such as --value a,c." : undefined,
+      );
+    }
+    value = values[0];
+  }
   const raw = value.trim();
   if (question.kind === "fields") {
     const answerFields = question.fields ?? [];
@@ -455,7 +465,6 @@ function encodeAnswer(deps: QuizDeps, form: ParsedForm, question: AttemptQuestio
     }
     return next;
   }
-  if (question.kind === "info") throw deps.usage(`Question ${question.number} is an information block; it takes no answer.`);
   if (question.kind === "unsupported" || (!question.field && question.kind !== "multi")) throw deps.usage(`Question ${question.number} is a ${question.type || "question"} type the CLI cannot answer.`, "Answer it in a browser; other questions can still be answered here.");
   if (question.kind === "text") {
     if (!raw) throw deps.usage(`Question ${question.number} needs a written answer.`);
