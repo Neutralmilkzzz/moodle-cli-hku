@@ -246,12 +246,12 @@ async function requireAccount(options: MailAuthOptions): Promise<MailAccountConf
   return account;
 }
 
-export async function verifyMailConnection(
-  options: MailAuthOptions & { password?: string; mailbox?: string } = {},
+async function verifyAccountConnection(
+  account: MailAccountConfig,
+  password: string,
+  mailboxName?: string,
 ): Promise<MailConnectionCheck> {
-  const account = await requireAccount(options);
-  const password = await resolvePassword(options, account);
-  const mailbox = normalizeMailbox(options.mailbox);
+  const mailbox = normalizeMailbox(mailboxName);
   return withMailbox(account, password, mailbox, async client => {
     if (!client.mailbox) {
       throw new Error(`Mailbox ${mailbox} did not open.`);
@@ -265,6 +265,14 @@ export async function verifyMailConnection(
       messages: client.mailbox.exists,
     };
   });
+}
+
+export async function verifyMailConnection(
+  options: MailAuthOptions & { password?: string; mailbox?: string } = {},
+): Promise<MailConnectionCheck> {
+  const account = await requireAccount(options);
+  const password = await resolvePassword(options, account);
+  return verifyAccountConnection(account, password, options.mailbox);
 }
 
 export async function loginMail(options: MailLoginOptions): Promise<MailStatus> {
@@ -288,7 +296,7 @@ export async function loginMail(options: MailLoginOptions): Promise<MailStatus> 
     port: options.port ?? DEFAULT_IMAP_PORT,
     secure: true,
   };
-  const check = await verifyMailConnection({ ...options, password, mailbox: "INBOX" }).catch(error => {
+  const check = await verifyAccountConnection(config, password, "INBOX").catch(error => {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(
       `Could not sign in to ${config.host} as ${config.username}. Check that IMAP/SMTP is enabled in 163 webmail and that you used the authorization code rather than the account password.\n${detail}`,
