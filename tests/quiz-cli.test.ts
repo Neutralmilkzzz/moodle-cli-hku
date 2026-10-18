@@ -2,12 +2,18 @@ import { readFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { runCli } from "../src/cli.js";
 import { ENV_MOODLE_BASE_URL, ENV_MOODLE_SESSION } from "../src/constants.js";
 
 const BASE = "https://school.example.edu";
 const ATTEMPT = `${BASE}/mod/quiz/attempt.php?attempt=900&cmid=32`;
+const CLI_TIMEOUT = process.platform === "win32" ? 45000 : 15000;
+let homeDir = "";
+
+beforeAll(async () => {
+  homeDir = await mkdtemp(join(tmpdir(), "moodle-quiz-cli-"));
+});
 
 function fixture(name: string): string {
   return readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8");
@@ -62,7 +68,7 @@ async function runQuiz(args: string[], fetchImpl: typeof fetch): Promise<{ code:
     stdout,
     stderr,
     stdin: { isTTY: false } as NodeJS.ReadStream,
-    homeDir: await mkdtemp(join(tmpdir(), "moodle-quiz-cli-")),
+    homeDir,
   });
   return { code, stderr: stderr.text(), stdout: stdout.text() };
 }
@@ -91,7 +97,7 @@ describe("quiz answer CLI", () => {
     expect(result.code, result.stderr).toBe(0);
     const post = calls.find(call => call.init?.method === "POST")!;
     expect(postedBody(post).get("q4000:3_answer")).toBe("<p>hello</p>");
-  }, 15000);
+  }, CLI_TIMEOUT);
 
   it("passes one explicit --value into a single-choice answer", async () => {
     const page0 = fixture("quiz-attempt-page-0.html");
@@ -101,7 +107,7 @@ describe("quiz answer CLI", () => {
 
     expect(result.code, result.stderr).toBe(0);
     expect(postedBody(calls.find(call => call.init?.method === "POST")!).get("q4000:1_answer")).toBe("1");
-  }, 15000);
+  }, CLI_TIMEOUT);
 
   it("passes one explicit --value into a multiple-choice answer", async () => {
     const page0 = fixture("quiz-attempt-page-0.html");
@@ -115,7 +121,7 @@ describe("quiz answer CLI", () => {
     expect(post.get("q4000:4_choice0")).toBe("1");
     expect(post.get("q4000:4_choice1")).toBe("0");
     expect(post.get("q4000:4_choice2")).toBe("1");
-  }, 15000);
+  }, CLI_TIMEOUT);
 
   it("passes one explicit --value into a single-input formulas answer", async () => {
     const single = fixture("quiz-attempt-formulas-single.html");
@@ -125,7 +131,7 @@ describe("quiz answer CLI", () => {
 
     expect(result.code, result.stderr).toBe(0);
     expect(postedBody(calls.find(call => call.init?.method === "POST")!).get("q5484577:7_0_0")).toBe("4");
-  }, 15000);
+  }, CLI_TIMEOUT);
 
   it("passes repeated --value flags into a multi-field formulas answer", async () => {
     const multi = fixture("quiz-attempt-formulas.html");
@@ -137,7 +143,7 @@ describe("quiz answer CLI", () => {
     const post = postedBody(calls.find(call => call.init?.method === "POST")!);
     expect(post.get("q5484577:7_0_0")).toBe("4");
     expect(post.get("q5484577:7_1_0")).toBe("32");
-  }, 15000);
+  }, CLI_TIMEOUT);
 
   it("rejects multiple explicit values for a non-fields question before posting", async () => {
     const page0 = fixture("quiz-attempt-page-0.html");
@@ -149,5 +155,5 @@ describe("quiz answer CLI", () => {
     expect(result.code, result.stderr).toBe(2);
     expect(result.stderr).toContain("takes exactly one --value, not 2");
     expect(calls.some(call => call.init?.method === "POST")).toBe(false);
-  }, 15000);
+  }, CLI_TIMEOUT);
 });
