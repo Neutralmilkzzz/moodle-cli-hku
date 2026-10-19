@@ -1,10 +1,10 @@
-<p align="center"><a href="https://unicorn.tuuhub.com"><img src=".github/assets/hero.jpg" alt="moodle-cli: Moodle from your terminal, scripts and AI agent, part of unicorn" width="100%"></a></p>
+<p align="center"><a href="https://unicorn.tuuhub.com"><img src=".github/assets/hero.jpg" alt="hku-cli: HKU Moodle, email and library spaces from the terminal" width="100%"></a></p>
 
-# moodle-cli
+# hku-cli
 
-**Give your AI agent access to Moodle.**
+**Moodle, forwarded HKU mail and HKU Library spaces from one command line.**
 
-Let it keep up with deadlines and grades, fetch course files, and search forum discussions. `moodle-cli` finds your active browser session and keeps it alive in the background, so Moodle's login wall stays out of your way.
+`hku-cli` keeps the full Moodle workflow from `moodle-cli`, reads forwarded university mail from a 163 mailbox over IMAP, sends through 163 SMTP, and adds live HKU Library space availability with guarded room-booking submission. It works as `hku` without breaking the original `moodle` executable.
 
 [![npm version](https://img.shields.io/npm/v/moodle-cli?logo=npm)](https://www.npmjs.com/package/moodle-cli)
 [![CI](https://github.com/bunizao/moodle-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/bunizao/moodle-cli/actions/workflows/ci.yml)
@@ -16,14 +16,81 @@ Let it keep up with deadlines and grades, fetch course files, and search forum d
 
 ## Quick links
 
-- [Set up with your agent](#start-with-your-agent)
-- [Install and sign in manually](#install-and-sign-in-manually)
+- [Build and install](#build-and-install)
+- [HKU mail](#hku-mail)
+- [HKU Library booking](#hku-library-booking)
+- [Moodle](#moodle-commands)
 - [Study Boooooooooost](#study-boooooooooost)
 - [Connect web AI through a private MCP server](#remote-mcp-for-web-ai)
 - [Developer and agent reference](#for-developers-and-agents)
 - [Contributing](#contributing)
 
-## For users
+## Build and install
+
+Node.js 22.13+ is required for browser-cookie access. From this repository:
+
+```bash
+npm ci
+npm run build
+node dist/hku.js --help
+```
+
+The package exposes both `hku` and the backward-compatible `moodle` binary. Existing Moodle commands remain available directly and under the optional `moodle` prefix:
+
+```bash
+hku units
+hku moodle units
+```
+
+HKU service sessions are stored in the OS credential vault and encrypted under `~/.config/hku-cli/state/`. Session tokens and cookies are never written to the repository.
+
+### Forwarded HKU mail
+
+HKU mail is forwarded to a 163 mailbox. The CLI reads that mailbox over IMAPS and sends with SMTPS using the 163 authorization code, not the account password:
+
+```bash
+hku mail login --username name@163.com
+hku mail inbox --today --limit 100
+hku mail inbox --unread --search "library"
+hku mail read <uid>
+```
+
+Send with a preview or execute it explicitly:
+
+```bash
+hku mail send --to student@connect.hku.hk --subject "Study room" --body "See you at 10." --dry-run
+hku mail send --to student@connect.hku.hk --subject "Study room" --body "See you at 10." --yes
+```
+
+`--body-file` reads a multiline body from disk, `--cc` may be repeated, and `--html` sends HTML. A non-interactive send requires `--yes`. Login prompts for the authorization code without echoing it. For automation, `HKU_MAIL_USERNAME` and `HKU_MAIL_AUTH_CODE` may be supplied through the environment. Host overrides are `HKU_MAIL_IMAP_HOST`, `HKU_MAIL_IMAP_PORT`, `HKU_MAIL_SMTP_HOST`, and `HKU_MAIL_SMTP_PORT`.
+
+### HKU Library booking
+
+List every bookable space type with the official live availability count:
+
+```bash
+hku library facilities
+hku library facilities --library "Main Library" --available
+```
+
+Sign in once through HKU SSO, inspect the form, then submit a specific official slot:
+
+```bash
+hku library login
+hku library status
+hku library slots --location "Chi Wah Learning Commons" --type "Study Room" --date 2026-10-19
+hku library book --room "Study Room 5" --floor CPD-1 --start 23:00 --end 23:45 --dry-run
+hku library book --room "Study Room 5" --floor CPD-1 --start 23:00 --end 23:45 --accept-policy --yes
+hku library bookings
+```
+
+The session is stored encrypted under `~/.config/hku-cli/state/`; ordinary `slots`, `book` and `bookings` calls reuse it. `hku library login --force` is only needed when SSO itself has expired. The CLI can resolve a room and time from live availability, or accept an official `NewBooking.aspx` URL/facility ids. It re-reads the signed-in form, verifies the date and exact session, refuses ambiguous forms, submits the ASP.NET form, checks the confirmation dialog, and verifies the success page. The live Chi Wah flow and post-booking acknowledgement email were exercised with a real reservation.
+
+## Moodle commands
+
+Moodle commands keep the original CLI contract: courses, deadlines, grades, files, forums, assignments, quizzes, downloads, sync, coverage and the private MCP server. Use `hku auth login` for the Moodle browser session and `hku units` or `hku due` for the daily workflow.
+
+## Moodle setup
 
 ### Start with your agent
 

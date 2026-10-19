@@ -101,6 +101,38 @@ import { looksLikeUrl, resolveTopLevelUrl } from "./url-resolver.js";
 import { createMcpCommandService, type McpCommandOutput, type McpCommandService } from "./mcp/cli.js";
 import { describeProgram } from "./command-contract.js";
 import { ONBOARDING_COPY } from "./mcp/deployment/onboarding.js";
+import {
+  loginHkuMail,
+  listHkuMail,
+  logoutHkuMail,
+  readHkuMail,
+  sendHkuMail,
+  getMailStatus,
+} from "./mail.js";
+import { validateSendMail } from "./mail-core.js";
+import {
+  bookLibrarySpace,
+  findLibrarySlots,
+  getLibrarySession,
+  getLibrarySessionStatus,
+  listLibraryBookings,
+  loadLibraryFacilities,
+  logoutLibrary,
+} from "./library.js";
+import {
+  buildBookingUrl,
+  filterLibraryFacilities,
+  HKU_LIBRARY_PUBLIC_URL,
+  parseBookingUrl,
+} from "./library-core.js";
+import {
+  formatBookingPlan,
+  formatLibraryFacilities,
+  formatLibrarySlots,
+  formatMailAddresses,
+  formatMailList,
+  formatMailMessage,
+} from "./service-formatters.js";
 
 interface CliIO {
   stdout?: NodeJS.WriteStream | { write(chunk: string): boolean };
@@ -112,6 +144,7 @@ interface CliIO {
   homeDir?: string;
   rootArgs?: string[];
   mcpService?: McpCommandService;
+  programName?: "hku" | "moodle";
 }
 
 interface Runtime {
@@ -151,7 +184,7 @@ const NOUNS: readonly NounSpec[] = [
 export function buildProgram(io: CliIO = {}): Command {
   const stdout = io.stdout ?? process.stdout;
   const stderr = io.stderr ?? process.stderr;
-  const program = createProgram({ name: "moodle", version: VERSION, description: MOODLE_TAGLINE });
+  const program = createProgram({ name: io.programName ?? "hku", version: VERSION, description: MOODLE_TAGLINE });
   banner(program, MOODLE_WORDMARK);
   program.configureOutput({
     writeOut: (text) => stdout.write(text),
@@ -570,6 +603,446 @@ export function buildProgram(io: CliIO = {}): Command {
       await openInBrowser(url);
       await runtime.output({ opened: url }, () => `Opened ${url}`, options);
     });
+
+  addOutputOptions(program.command("status").description("Show configuration and session state for Moodle, HKU mail and HKU Library.")).action(
+    async (options: OutputCommandOptions) => {
+      let moodle: Record<string, unknown>;
+      try {
+        const baseUrl = (await loadConfig({
+          env: io.env,
+          cwd: io.cwd,
+          homeDir: io.homeDir,
+          stdin: { isTTY: false },
+          fetch: io.fetchImpl,
+        })).baseUrl;
+        const status = await getAuthStatus(baseUrl, { homeDir: io.homeDir, fetchImpl: io.fetchImpl });
+        moodle = { configured: true, base_url: baseUrl, session_alive: status.session_alive, cached: status.session_cached };
+      } catch {
+        moodle = { configured: false };
+      }
+      const [mail, library] = await Promise.all([
+        getMailStatus({ homeDir: io.homeDir, env: io.env }),
+        getLibrarySessionStatus({ homeDir: io.homeDir, env: io.env, fetchImpl: io.fetchImpl }),
+      ]);
+      const result = { moodle, mail, library };
+      await runtime.output(result, () => [
+        `Moodle   ${moodle.configured ? `${moodle.session_alive ? "signed in" : "session needs attention"} · ${String(moodle.base_url)}` : "not configured"}`,
+        `Mail     ${mail.logged_in ? `signed in${mail.username ? ` as ${mail.username}` : ""}` : "not signed in"}`,
+        `Library  ${library.logged_in ? "signed in" : "not signed in"}`,
+        "",
+        tryLines(["hku mail login", "hku library login", "hku units"]),
+      ].join("\n"), options, false);
+    },
+  );
+
+  const mail = program.command("mail").description("Read and send mail through the forwarding 163 mailbox.");
+  addOutputOptions(
+    mail
+      .command("login")
+      .description("Save and verify the 163 mailbox address and authorization code.")
+      .option("--username <address>", "Forwarding mailbox address, for example name@163.com."),
+  ).action(
+    async (options: OutputCommandOptions & { username?: string }) => {
+      const username = options.username || io.env?.HKU_MAIL_USERNAME;
+      if (!username) {
+        throw new UsageError("Pass --username with the 163 mailbox address.");
+      }
+      const authorizationCode = io.env?.HKU_MAIL_AUTH_CODE
+        || await readSecretLine(
+          io.stdin ?? process.stdin,
+          stderr as NodeJS.WritableStream,
+          (io.stdin ?? process.stdin).isTTY ? "163 authorization code (not echoed): " : "",
+        );
+      if (!authorizationCode) throw new UsageError("No 163 authorization code was provided.");
+      const state = await loginHkuMail({
+        username,
+        authorizationCode,
+        options: { homeDir: io.homeDir, env: io.env },
+      });
+      await runtime.output(
+        { logged_in: true, provider: state.provider, username: state.username },
+        () => `163 mailbox signed in as ${state.username}.`,
+        options,
+        false,
+      );
+    },
+  );
+  addOutputOptions(mail.command("status").description("Check the saved HKU mail session.")).action(
+    async (options: OutputCommandOptions) => {
+      const status = await getMailStatus({ homeDir: io.homeDir, env: io.env });
+      await runtime.output(
+        status,
+        () => status.logged_in
+          ? `163 mailbox signed in as ${status.username}.`
+          : "The 163 mailbox is not signed in. Run hku mail login --username ADDRESS.",
+        options,
+        false,
+      );
+    },
+  );
+  addOutputOptions(
+    mail
+      .command("inbox")
+      .alias("list")
+      .description("List recent messages in the HKU inbox.")
+      .argument("[query]", "Search text"),
+  )
+    .option("--limit <number>", "Maximum messages.", parsePositiveInt, 20)
+    .option("--unread", "Only unread messages.")
+    .option("--today", "Only messages received today in Asia/Shanghai.")
+    .action(async (query: string | undefined, options: OutputCommandOptions & { limit: number; unread?: boolean; today?: boolean }) => {
+      const messages = await listHkuMail({
+        homeDir: io.homeDir,
+        env: io.env,
+        limit: runtime.count("limit", options.limit),
+        unread: options.unread,
+        ...(query ? { search: query } : {}),
+        ...(options.today ? { since: new Date() } : {}),
+      });
+      await runtime.output(
+        { messages, total: messages.length },
+        () => formatMailList(messages),
+        options,
+        false,
+      );
+    });
+  addOutputOptions(mail.command("read").description("Read one 163 mailbox message.").argument("<uid>", "IMAP message UID")).action(
+    async (uid: string, options: OutputCommandOptions) => {
+      const message = await readHkuMail(uid, { homeDir: io.homeDir, env: io.env });
+      await runtime.output({ message }, () => formatMailMessage(message), options, false);
+    },
+  );
+  addOutputOptions(
+    mutating(
+      mail
+        .command("send")
+        .description("Send an email through the forwarding 163 mailbox.")
+        .option("--to <address>", "Recipient address; repeat or comma-separate.", collectValue)
+        .option("--cc <address>", "Cc address; repeat or comma-separate.", collectValue)
+        .option("--subject <subject>", "Message subject.")
+        .option("--body <text>", "Plain-text body.")
+        .option("--body-file <path>", "Read the body from a local file.")
+        .option("--html", "Send the body as HTML."),
+    ),
+  ).action(
+    async (options: OutputCommandOptions & {
+      to?: string[];
+      cc?: string[];
+      subject?: string;
+      body?: string;
+      bodyFile?: string;
+      html?: boolean;
+    }) => {
+      if (options.body && options.bodyFile) throw new UsageError("Use either --body or --body-file, not both.");
+      const body = options.bodyFile
+        ? await readFile(path.resolve(io.cwd ?? process.cwd(), options.bodyFile), "utf8")
+        : options.body ?? "";
+      const plan = validateSendMail({
+        to: options.to ?? [],
+        cc: options.cc ?? [],
+        subject: options.subject ?? "",
+        body,
+        html: Boolean(options.html),
+      });
+      if (program.opts().dryRun) {
+        await runtime.output({ planned: plan }, () => [
+          `To: ${formatMailAddresses(plan.to)}`,
+          ...(plan.cc?.length ? [`Cc: ${formatMailAddresses(plan.cc)}`] : []),
+          `Subject: ${plan.subject}`,
+          "",
+          plan.body,
+        ].join("\n"), options, false);
+        return;
+      }
+      if (!program.opts().yes && !human()) {
+        throw new UsageError("Sending email requires --yes when stdin is not interactive.", "Use --dry-run to preview the message.");
+      }
+      const palette = theme();
+      if (!await confirm({
+        summary: [
+          `${palette.dim("To")}       ${formatMailAddresses(plan.to)}`,
+          ...(plan.cc?.length ? [`${palette.dim("Cc")}       ${formatMailAddresses(plan.cc)}`] : []),
+          `${palette.dim("Subject")}  ${plan.subject}`,
+          "",
+          plan.body.length > 600 ? `${plan.body.slice(0, 600)}…` : plan.body,
+        ].join("\n"),
+      }, { yes: Boolean(program.opts().yes), dryRun: false, interactive: human() })) return;
+      const receipt = await sendHkuMail(plan, { homeDir: io.homeDir, env: io.env });
+      await runtime.output(receipt, () => `Sent "${receipt.subject}" to ${receipt.to.join(", ")}.`, options, false);
+    },
+  );
+  addOutputOptions(mutating(mail.command("logout").description("Remove the saved HKU mail session."))).action(
+    async (options: OutputCommandOptions) => {
+      if (!await confirm(
+        { summary: "Remove the saved HKU mail session from this computer." },
+        { yes: Boolean(program.opts().yes), dryRun: Boolean(program.opts().dryRun), interactive: human() },
+      )) return;
+      await logoutHkuMail({ homeDir: io.homeDir });
+      await runtime.output({ logged_out: true }, () => "HKU mail session removed.", options, false);
+    },
+  );
+
+  const library = program.command("library").description("Find HKU Library spaces and submit room reservations.");
+  addOutputOptions(
+    library
+      .command("login")
+      .description("Save or reuse a durable HKUL booking-system session.")
+      .option("--force", "Ignore the encrypted cached session and open HKU SSO."),
+  ).action(
+    async (options: OutputCommandOptions & { force?: boolean }) => {
+      const session = await getLibrarySession({
+        homeDir: io.homeDir,
+        env: io.env,
+        fetchImpl: io.fetchImpl,
+        interactive: true,
+        noCache: Boolean(options.force),
+        onBrowserOpened: () => stderr.write("A browser window opened. Complete HKU sign-in; the booking session will be captured automatically.\n"),
+      });
+      await runtime.output(
+        { logged_in: true, source: session.source },
+        () => "HKUL Library booking session saved.",
+        options,
+        false,
+      );
+    },
+  );
+  addOutputOptions(library.command("status").description("Check the saved HKUL Library booking session.")).action(
+    async (options: OutputCommandOptions) => {
+      const status = await getLibrarySessionStatus({ homeDir: io.homeDir, env: io.env, fetchImpl: io.fetchImpl });
+      await runtime.output(
+        status,
+        () => status.logged_in
+          ? "HKUL Library is signed in."
+          : "HKUL Library is not signed in. Run hku library login.",
+        options,
+        false,
+      );
+    },
+  );
+  addOutputOptions(mutating(library.command("logout").description("Remove the saved HKUL Library booking session."))).action(
+    async (options: OutputCommandOptions) => {
+      if (!await confirm(
+        { summary: "Remove the saved HKUL Library booking session from this computer." },
+        { yes: Boolean(program.opts().yes), dryRun: Boolean(program.opts().dryRun), interactive: human() },
+      )) return;
+      await logoutLibrary({ homeDir: io.homeDir });
+      await runtime.output({ logged_out: true }, () => "HKUL Library session removed.", options, false);
+    },
+  );
+  addOutputOptions(
+    library
+      .command("facilities")
+      .description("List HKU Library bookable space types and live availability counts.")
+      .option("--library <name>", "Filter by library or venue name.")
+      .option("--type <name>", "Filter by facility type.")
+      .option("--available", "Only facilities with at least one available space."),
+  ).action(
+    async (options: OutputCommandOptions & { library?: string; type?: string; available?: boolean }) => {
+      const all = await loadLibraryFacilities(io.fetchImpl);
+      const result = filterLibraryFacilities(all, {
+        library: options.library,
+        type: options.type,
+        availableOnly: options.available,
+      });
+      await runtime.output(
+        { ...result, total: result.facilities.length },
+        () => formatLibraryFacilities(result),
+        options,
+        false,
+      );
+    },
+  );
+  addOutputOptions(
+    library
+      .command("slots")
+      .description("List exact available rooms and time sessions for an HKUL location.")
+      .option("--location <name>", "Location name.", "Chi Wah Learning Commons")
+      .option("--type <name>", "Facility type.", "Study Room")
+      .option("--date <date>", "Date (YYYY-MM-DD); defaults to today in Hong Kong.")
+      .option("--floor <floor>", "Filter by exact floor label, such as CPD-1.")
+      .option("--room <room>", "Filter by exact room name.")
+      .option("--start <time>", "Filter by exact start time (HH:mm).")
+      .option("--end <time>", "Filter by exact end time (HH:mm)."),
+  ).action(
+    async (options: OutputCommandOptions & {
+      location: string;
+      type: string;
+      date?: string;
+      floor?: string;
+      room?: string;
+      start?: string;
+      end?: string;
+    }) => {
+      const result = await findLibrarySlots({
+        location: options.location,
+        facilityType: options.type,
+        date: options.date,
+        floor: options.floor,
+        room: options.room,
+        startTime: options.start,
+        endTime: options.end,
+      }, { homeDir: io.homeDir, env: io.env, fetchImpl: io.fetchImpl, interactive: human() });
+      await runtime.output(
+        { ...result, total: result.slots.length },
+        () => formatLibrarySlots(result),
+        options,
+        false,
+      );
+    },
+  );
+  addOutputOptions(
+    mutating(
+      library
+        .command("book")
+        .description("Submit one exact HKUL NewBooking reservation after a live form check.")
+        .argument("[url]", "Official NewBooking.aspx link for one available slot.")
+        .option("--library-id <id>", "Numeric HKUL library id when no URL is supplied.")
+        .option("--facility-type-id <id>", "Numeric HKUL facility type id when no URL is supplied.")
+        .option("--facility-id <id>", "Numeric HKUL facility id when no URL is supplied.")
+        .option("--location <name>", "Location name to search when no URL is supplied.", "Chi Wah Learning Commons")
+        .option("--type <name>", "Facility type to search when no URL is supplied.", "Study Room")
+        .option("--floor <floor>", "Exact floor label, such as CPD-1.")
+        .option("--room <room>", "Exact room name to search when no URL is supplied.")
+        .option("--date <date>", "Booking date (YYYY-MM-DD) when no URL is supplied.")
+        .option("--session <index>", "Zero-based session index when no URL is supplied.", parseNonNegativeInt)
+        .option("--start <time>", "Exact session start time (HH:mm).")
+        .option("--end <time>", "Exact session end time (HH:mm).")
+        .option("--description <text>", "Optional booking description.")
+        .option("--email <address>", "Optional confirmation email address.")
+        .option("--accept-policy", "Acknowledge the HKUL booking policies."),
+    ),
+  ).action(
+    async (url: string | undefined, options: OutputCommandOptions & {
+      libraryId?: string;
+      facilityTypeId?: string;
+      facilityId?: string;
+      location: string;
+      type: string;
+      floor?: string;
+      room?: string;
+      date?: string;
+      session?: number;
+      start?: string;
+      end?: string;
+      description?: string;
+      email?: string;
+      acceptPolicy?: boolean;
+    }) => {
+      let targetUrl = url;
+      if (!targetUrl && options.libraryId && options.facilityTypeId && options.facilityId && options.date && options.session !== undefined) {
+        targetUrl = buildBookingUrl({
+          libraryId: options.libraryId,
+          facilityTypeId: options.facilityTypeId,
+          facilityId: options.facilityId,
+          date: options.date,
+          sessionIndex: options.session,
+        });
+      }
+      if (!targetUrl) {
+        if (!options.room) {
+          throw new UsageError(
+            "Library booking needs an exact room, a NewBooking URL, or numeric IDs.",
+            "Run `hku library slots --location LOCATION --type TYPE` to find a room and time.",
+          );
+        }
+        const availability = await findLibrarySlots({
+          location: options.location,
+          facilityType: options.type,
+          date: options.date,
+          floor: options.floor,
+          room: options.room,
+          startTime: options.start,
+          endTime: options.end,
+        }, { homeDir: io.homeDir, env: io.env, fetchImpl: io.fetchImpl });
+        if (availability.slots.length !== 1) {
+          throw new UsageError(
+            availability.slots.length
+              ? `${availability.slots.length} slots match; narrow the floor, room, or time.`
+              : "That exact HKUL room and time is not currently available.",
+            "Run `hku library slots` with the same filters to inspect the live result.",
+          );
+        }
+        targetUrl = availability.slots[0].booking_url;
+      }
+      parseBookingUrl(targetUrl);
+      await getLibrarySession({
+        homeDir: io.homeDir,
+        env: io.env,
+        fetchImpl: io.fetchImpl,
+        interactive: human() && !program.opts().dryRun,
+      });
+      const plan = await bookLibrarySpace(targetUrl, {
+        homeDir: io.homeDir,
+        env: io.env,
+        fetchImpl: io.fetchImpl,
+        dryRun: true,
+        startTime: options.start,
+        endTime: options.end,
+        description: options.description,
+        email: options.email,
+      });
+      if (program.opts().dryRun) {
+        await runtime.output({ planned: plan.plan }, () => formatBookingPlan(plan.plan, false, false), options, false);
+        return;
+      }
+      if (!program.opts().yes && !human()) {
+        throw new UsageError("Submitting a library booking requires --yes when stdin is not interactive.", "Use --dry-run to inspect the exact slot first.");
+      }
+      if (!options.acceptPolicy && !human()) {
+        throw new UsageError("Library booking requires --accept-policy.", "Review the official HKUL booking policies, then pass --accept-policy --yes.");
+      }
+      const palette = theme();
+      if (!await confirm({
+        summary: [
+          formatBookingPlan(plan.plan, false, false),
+          "",
+          palette.tone("warning", "This creates a real HKUL reservation and submits the HKUL booking policy acknowledgment."),
+        ].join("\n"),
+      }, { yes: Boolean(program.opts().yes), dryRun: false, interactive: human() })) return;
+      const receipt = await bookLibrarySpace(targetUrl, {
+        homeDir: io.homeDir,
+        env: io.env,
+        fetchImpl: io.fetchImpl,
+        dryRun: false,
+        startTime: plan.plan.start_time,
+        endTime: plan.plan.end_time,
+        description: options.description,
+        email: options.email,
+      });
+      await runtime.output(
+        receipt,
+        () => formatBookingPlan(receipt.plan, receipt.submitted, receipt.accepted),
+        options,
+        false,
+      );
+    },
+  );
+  addOutputOptions(library.command("bookings").description("List reservations in My Booking Record.")).action(
+    async (options: OutputCommandOptions) => {
+      const bookings = await listLibraryBookings({
+        homeDir: io.homeDir,
+        env: io.env,
+        fetchImpl: io.fetchImpl,
+        interactive: human(),
+      });
+      await runtime.output({ bookings, total: bookings.length }, () => bookings.length
+        ? bookings.map(item => [item.date, item.time, item.location, item.floor, item.facility, item.status].filter(Boolean).join(" · ")).join("\n")
+        : "No library bookings found.", options, false);
+    },
+  );
+  addOutputOptions(
+    library
+      .command("open")
+      .description("Open the HKU Library booking site in your browser.")
+      .argument("[url]", "HKUL facility or booking URL"),
+  ).action(async (url: string | undefined, options: OutputCommandOptions) => {
+    const target = url || HKU_LIBRARY_PUBLIC_URL;
+    if (!/^https:\/\/(?:[^/]+\.)?(?:hku\.hk|hku\.edu\.hk)\//iu.test(target)) {
+      throw new UsageError("Library URL must use an official HKU HTTPS host.");
+    }
+    await openInBrowser(target);
+    await runtime.output({ opened: target }, () => `Opened ${target}`, options, false);
+  });
 
   addOutputOptions(program.command("user").description("Show authenticated user info.")).action(async (options: OutputCommandOptions) => {
     const user = await (await runtime.getClient()).getSiteInfo();
@@ -1059,7 +1532,7 @@ export function buildProgram(io: CliIO = {}): Command {
   });
   skills.command("generate").description("Regenerate the agent skill bundle from the CLI command tree.").action(() => {
     writeGeneratedSkill(program);
-    stdout.write("Generated Moodle skill bundle\n");
+    stdout.write("Generated HKU skill bundle\n");
   });
   skills.command("add").description("Install the published skill through npx skills add.").allowUnknownOption(true).action((_options, command) => installSkill(command.args));
 
@@ -1068,16 +1541,17 @@ export function buildProgram(io: CliIO = {}): Command {
     for (const name of names) for (const command of program.commands) if (command.name() === name) helpSection(command, title);
   }
   examples(program, [
-    "moodle  # today: due items, alerts and news",
-    "moodle UNIT grades",
-    "moodle submit UNIT \"Assignment 2\" report.pdf",
+    "hku mail inbox",
+    "hku library facilities",
+    "hku units",
   ]);
   return program;
 }
 
 // Grouped the way `gh` does: what a person reaches for daily, then the rest, then what only an agent runs.
 const HELP_SECTIONS: Readonly<Record<string, readonly string[]>> = {
-  "Core commands": ["due", "news", "find", "get", "open", "submit", "quiz", "units", "activities", "grades", "threads", "forums"],
+  "HKU services": ["status", "mail", "library"],
+  "Moodle": ["due", "news", "find", "get", "open", "submit", "quiz", "units", "activities", "grades", "threads", "forums"],
   "Additional commands": ["sync", "user", "todo", "alerts", "overview", "download", "auth", "doctor", "coverage", "completion", "uninstall"],
   "Agent commands": ["mcp", "commands", "skills"],
 };
@@ -1085,7 +1559,9 @@ const HELP_SECTIONS: Readonly<Record<string, readonly string[]>> = {
 export async function runCli(argv = process.argv, io: CliIO = {}): Promise<number> {
   const stderr = io.stderr ?? process.stderr;
   const stdout = io.stdout ?? process.stdout;
-  const args = insertDefaultVerb(argv.slice(2), NOUNS);
+  const rawArgs = argv.slice(2);
+  const args = insertDefaultVerb(rawArgs[0] === "moodle" ? rawArgs.slice(1) : rawArgs, NOUNS);
+  const programName = path.basename(argv[1] ?? "hku").toLowerCase().startsWith("moodle") ? "moodle" : "hku";
   const ui = createUi({
     input: io.stdin ?? process.stdin,
     output: stderr as Writable,
@@ -1098,7 +1574,7 @@ export async function runCli(argv = process.argv, io: CliIO = {}): Promise<numbe
   });
   try {
     await startupUpdateNotice(args, stderr, { homeDir: io.homeDir, env: io.env });
-    await parseWithPrompts(() => buildProgram({ ...io, rootArgs: args }), args, { ui, fillers: { unit: pickUnit(io, ui) } });
+    await parseWithPrompts(() => buildProgram({ ...io, rootArgs: args, programName }), args, { ui, fillers: { unit: pickUnit(io, ui) } });
     return 0;
   } catch (error) {
     if (isInformationalExit(error)) {
@@ -1109,7 +1585,16 @@ export async function runCli(argv = process.argv, io: CliIO = {}): Promise<numbe
     const reference = error instanceof ReferenceError ? error : undefined;
     const reported = reportError(asNetworkError(error) ?? error, "json");
     const envelope = JSON.parse(reported.text);
-    const hint = reference?.hint || normalized.hint || ({ auth: "Run moodle auth login, or moodle doctor.", config: "Run moodle doctor to check configuration.", not_found: "Run moodle units or moodle find QUERY.", usage: "Run moodle --help or moodle commands --json.", upstream: "Run moodle doctor, then retry.", network: "Check the connection, then retry.", unexpected: "Run moodle doctor; use --verbose for request timings.", cancelled: "Retry when ready." }[normalized.code]);
+    const hint = reference?.hint || normalized.hint || ({
+      auth: `Run ${programName === "hku" ? "hku auth" : "moodle auth"} login, or ${programName} doctor.`,
+      config: `Run ${programName} doctor to check configuration.`,
+      not_found: `Run ${programName} units or ${programName} find QUERY.`,
+      usage: `Run ${programName} --help or ${programName} commands --json.`,
+      upstream: `Run ${programName} doctor, then retry.`,
+      network: "Check the connection, then retry.",
+      unexpected: `Run ${programName} doctor; use --verbose for request timings.`,
+      cancelled: "Retry when ready.",
+    }[normalized.code]);
     envelope.error.hint = hint;
     if (reference) { envelope.error.code = reference.code; envelope.error.message = reference.message; envelope.error.candidates = reference.candidates; envelope.exit_code = reference.code === "ambiguous" ? 2 : 4; }
     stderr.write(format === "table" ? `✗ ${String(envelope.error.message).replace(/\s+/gu, " ")}\n${hint}\n` : `${JSON.stringify(envelope)}\n`);
@@ -1269,6 +1754,14 @@ function parsePositiveInt(value: string): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) {
     throw new UsageError("Expected a positive integer.");
+  }
+  return parsed;
+}
+
+function parseNonNegativeInt(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new UsageError("Expected a non-negative integer.");
   }
   return parsed;
 }

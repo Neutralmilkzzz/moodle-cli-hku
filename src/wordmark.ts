@@ -1,14 +1,18 @@
 import type { Ui } from "@bunizao/cli-kit";
 
-export const MOODLE_TAGLINE = "Read Moodle and submit work from the command line.";
+export const HKU_TAGLINE = "Moodle, mail and library spaces from one command line.";
+export const MOODLE_TAGLINE = HKU_TAGLINE;
 
-// figlet "Small"; kept as lines so the backslashes and the backtick survive as typed.
-export const MOODLE_WORDMARK = [
-  "                     _ _",
-  "  _ __  ___  ___  __| | |___",
-  " | '  \\/ _ \\/ _ \\/ _` | / -_)",
-  " |_|_|_\\___/\\___/\\__,_|_\\___|",
+// figlet "Small"; kept as lines so the backslashes survive as typed.
+export const HKU_WORDMARK = [
+  " _   _ _  __ _   _",
+  "| | | | |/ /| | | |",
+  "| |_| | ' < | |_| |",
+  " \\__, |_|\\_\\\\__,_|",
+  " |___/",
 ].join("\n");
+
+export const MOODLE_WORDMARK = HKU_WORDMARK;
 
 let shown = false;
 
@@ -16,5 +20,5 @@ let shown = false;
 export function showWordmark(ui: Ui): void {
   if (shown) return;
   shown = true;
-  ui.banner(MOODLE_WORDMARK, MOODLE_TAGLINE);
+  ui.banner(HKU_WORDMARK, HKU_TAGLINE);
 }

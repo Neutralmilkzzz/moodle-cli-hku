@@ -5,10 +5,10 @@ import type { Command } from "commander";
 import type { CommandDescription } from "@bunizao/cli-kit";
 import { describeProgram, intentContracts } from "./command-contract.js";
 
-export const SKILL_NAME = "moodle-cli";
-export const SKILL_SOURCE = "https://github.com/bunizao/moodle-cli";
+export const SKILL_NAME = "hku-cli";
+export const SKILL_SOURCE = "https://github.com/Neutralmilkzzz/moodle-cli-hku";
 export const SKILLS_SPEC_URL = "https://github.com/vercel-labs/skills";
-export const SKILL_DESCRIPTION = "Read Moodle units, deadlines, grades, announcements and files; submit assignment files; diagnose sign-in and manage a private MCP server.";
+export const SKILL_DESCRIPTION = "HKU Moodle, forwarded mail and Library booking from the terminal.";
 
 export interface SkillFlag {
   name: string;

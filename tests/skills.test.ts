@@ -30,7 +30,7 @@ describe("skills install wrappers", () => {
       "npx",
       "skills",
       "add",
-      "https://github.com/bunizao/moodle-cli",
+      "https://github.com/Neutralmilkzzz/moodle-cli-hku",
       "--agent",
       "codex",
     ]);
@@ -44,7 +44,7 @@ describe("skills install wrappers", () => {
       "--",
       "skills",
       "add",
-      "https://github.com/bunizao/moodle-cli",
+      "https://github.com/Neutralmilkzzz/moodle-cli-hku",
       "--agent",
       "codex",
     ]);
@@ -59,14 +59,14 @@ describe("skills install wrappers", () => {
       "npx",
       "skills",
       "add",
-      "https://github.com/bunizao/moodle-cli",
+      "https://github.com/Neutralmilkzzz/moodle-cli-hku",
       "--agent",
       "codex",
     ]);
     expect(spawnSyncMock).toHaveBeenCalledWith("npx", ["--version"], { stdio: "ignore" });
     expect(spawnSyncMock).toHaveBeenCalledWith(
       "npx",
-      ["skills", "add", "https://github.com/bunizao/moodle-cli", "--agent", "codex"],
+      ["skills", "add", "https://github.com/Neutralmilkzzz/moodle-cli-hku", "--agent", "codex"],
       { stdio: "inherit" },
     );
   });
@@ -74,8 +74,8 @@ describe("skills install wrappers", () => {
 
 describe("skill generation", () => {
   it("summarizes the skill entrypoint", () => {
-    expect(formatSkillSummary()).toContain("Install: npx skills add https://github.com/bunizao/moodle-cli");
-    expect(formatSkillSummary()).toContain("Moodle units");
+    expect(formatSkillSummary()).toContain("Install: npx skills add https://github.com/Neutralmilkzzz/moodle-cli-hku");
+    expect(formatSkillSummary()).toContain("HKU Moodle");
   });
 
   it("extracts public commands from a commander-like tree", () => {
@@ -113,7 +113,7 @@ describe("skill generation", () => {
       ],
     });
 
-    expect(markdown).toContain("name: moodle-cli");
+    expect(markdown).toContain("name: hku-cli");
     expect(markdown).toContain("| moodle todo | List upcoming actionable timeline items. |  | --limit (default: 20)<br>--fields |");
     expect(markdown).toContain("`--fields a,b,c` keeps only listed top-level fields");
     expect(markdown).toBe(generateSkillMarkdown({
@@ -159,7 +159,7 @@ describe("skill generation", () => {
     expect(downloadsReference).toContain("--force");
     expect(downloadsReference).toContain("whole");
     expect(outputReference).toContain("`--fields a,b,c` keeps only listed top-level fields");
-    expect(agentMetadata).toContain('display_name: "Moodle CLI"');
-    expect(agentMetadata).toContain("retrieve authenticated course files");
+    expect(agentMetadata).toContain('display_name: "HKU CLI"');
+    expect(agentMetadata).toContain("HKU Moodle, forwarded mail and Library spaces");
   });
 });

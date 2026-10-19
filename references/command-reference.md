@@ -40,6 +40,22 @@ asks for confirmation (`--yes` skips it) and prints the receipt Moodle shows aft
 | moodle forums show | List discussions from a forum. | <forum> | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required)<br>--limit (value required)<br>--query (value required) |
 | moodle grades | Inspect grades. |  |  |
 | moodle grades list | Show marked grades; request summary or all. | [unit] | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required)<br>--mode (value required)<br>--types (value required)<br>--include-feedback<br>--include-ungraded<br>--limit (value required)<br>--offset (value required)<br>--graded-only |
+| moodle library | Find HKU Library spaces and submit room reservations. |  |  |
+| moodle library book | Submit one exact HKUL NewBooking reservation after a live form check. | [url] | --library-id (value required)<br>--facility-type-id (value required)<br>--facility-id (value required)<br>--location (value required)<br>--type (value required)<br>--floor (value required)<br>--room (value required)<br>--date (value required)<br>--session (value required)<br>--start (value required)<br>--end (value required)<br>--description (value required)<br>--email (value required)<br>--accept-policy<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle library bookings | List reservations in My Booking Record. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle library facilities | List HKU Library bookable space types and live availability counts. |  | --library (value required)<br>--type (value required)<br>--available<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle library login | Save or reuse a durable HKUL booking-system session. |  | --force<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle library logout | Remove the saved HKUL Library booking session. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle library open | Open the HKU Library booking site in your browser. | [url] | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle library slots | List exact available rooms and time sessions for an HKUL location. |  | --location (value required)<br>--type (value required)<br>--date (value required)<br>--floor (value required)<br>--room (value required)<br>--start (value required)<br>--end (value required)<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle library status | Check the saved HKUL Library booking session. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle mail | Read and send mail through the forwarding 163 mailbox. |  |  |
+| moodle mail inbox | List recent messages in the HKU inbox. | [query] | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required)<br>--limit (value required)<br>--unread<br>--today |
+| moodle mail login | Save and verify the 163 mailbox address and authorization code. |  | --username (value required)<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle mail logout | Remove the saved HKU mail session. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle mail read | Read one 163 mailbox message. | <uid> | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle mail send | Send an email through the forwarding 163 mailbox. |  | --to (value required)<br>--cc (value required)<br>--subject (value required)<br>--body (value required)<br>--body-file (value required)<br>--html<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle mail status | Check the saved HKU mail session. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
 | moodle mcp | Deploy a private MCP Worker on Cloudflare; encrypted session storage and local renewal. Free-tier limits apply. |  |  |
 | moodle mcp bridge | Bridge a stdio MCP client to the managed remote server. |  | --profile (value required) |
 | moodle mcp clients | List pending and approved OAuth clients. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
@@ -66,6 +82,7 @@ asks for confirmation (`--yes` skips it) and prints the receipt Moodle shows aft
 | moodle skills | Show skill metadata or delegate to the shared skills CLI. |  |  |
 | moodle skills add | Install the published skill through npx skills add. |  |  |
 | moodle skills generate | Regenerate the agent skill bundle from the CLI command tree. |  |  |
+| moodle status | Show configuration and session state for Moodle, HKU mail and HKU Library. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
 | moodle submit | Upload local files into an assignment; returns the receipt Moodle shows afterwards. | <ref> [files...] | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required)<br>--final<br>--replace<br>--accept-statement |
 | moodle sync | Keep one local folder per unit in step with Moodle: new files arrive, changed ones update, and a file you edited is never overwritten. | [unit] | --to (value required)<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
 | moodle threads | Inspect forum discussion threads. |  |  |

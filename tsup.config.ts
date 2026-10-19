@@ -2,6 +2,7 @@ import { defineConfig } from "tsup";
 
 export default defineConfig({
   entry: {
+    hku: "src/cli.ts",
     moodle: "src/cli.ts",
   },
   format: ["esm"],
