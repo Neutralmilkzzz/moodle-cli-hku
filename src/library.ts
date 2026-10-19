@@ -119,6 +119,14 @@ export async function getLibrarySession(options: LibraryServiceOptions = {}): Pr
     return { cookies: browser, source: "browser", from_cache: false };
   }
 
+  if (options.interactive) {
+    const persisted = await loginThroughBrowser(options, { headless: true, timeoutMs: 8_000 }).catch(() => []);
+    if (persisted.length && await validateLibraryCookies(persisted, fetchImpl)) {
+      await saveLibrarySession(persisted, options);
+      return { cookies: persisted, source: "browser", from_cache: false };
+    }
+  }
+
   if (!options.interactive) {
     throw new AuthError(
       "No authenticated HKUL library session was found.",
@@ -438,18 +446,22 @@ async function browserLibraryCookies(options: LibraryServiceOptions): Promise<We
   }
 }
 
-async function loginThroughBrowser(options: LibraryServiceOptions): Promise<WebCookie[]> {
+async function loginThroughBrowser(
+  options: LibraryServiceOptions,
+  mode: { headless?: boolean; timeoutMs?: number } = {},
+): Promise<WebCookie[]> {
   let validated: WebCookie[] | null = null;
   let lastSignature = "";
   try {
     const result = await loginWithCdp({
       url: LIBRARY_LOGIN_URL,
-      headless: false,
+      headless: Boolean(mode.headless),
+      ...(mode.timeoutMs ? { timeoutMs: mode.timeoutMs } : {}),
       homeDir: options.homeDir,
       env: options.env,
       platform: options.platform,
       profileDir: cdpProfileDir(options.homeDir),
-      onOpened: () => options.onBrowserOpened?.(LIBRARY_LOGIN_URL),
+      onOpened: mode.headless ? undefined : () => options.onBrowserOpened?.(LIBRARY_LOGIN_URL),
       isDone: async cookies => {
         const stateCookies = cookies
           .filter(cookie => /(?:^|\.)hku\.hk$/iu.test(cookie.domain))

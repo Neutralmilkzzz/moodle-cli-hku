@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+  <body>
+    <form action="/fbs/centralbook/book/Web/search-availability.php?action=search" method="post">
+      <select id="schedules" name="scheduleId">
+        <option value="0">All Schedules</option>
+        <option value="253">CEDARS - CYMAC - Band Room</option>
+      </select>
+      <select id="resourceGroups" name="resourceId[]" multiple>
+        <option value="1497">CEDARS - CYMAC - Band Room</option>
+        <option value="2871">FSCAC - Music Room - 1A08</option>
+      </select>
+      <input type="hidden" name="CSRF_TOKEN" value="test-csrf-token">
+    </form>
+    <div class="opening" data-resourceid="1497" data-startdate="2026-10-23 10:00:00" data-enddate="2026-10-23 11:00:00">
+      <div class="resourceName" data-resourceid="1497">CEDARS - CYMAC - Band Room</div>
+      <div class="dates">Friday, 10/23 10:00 AM - 11:00 AM</div>
+    </div>
+    <div class="opening" data-resourceid="2871" data-startdate="2026-10-23 14:00:00" data-enddate="2026-10-23 15:00:00">
+      <div class="resourceName" data-resourceid="2871">FSCAC - Music Room - 1A08</div>
+      <div class="dates">Friday, 10/23 2:00 PM - 3:00 PM</div>
+    </div>
+  </body>
+</html>

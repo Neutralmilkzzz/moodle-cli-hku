@@ -9,6 +9,10 @@ export interface FacilityService {
   lead_time?: string;
   booking: "integrated" | "portal" | "form";
   cli?: string;
+  request_form?: {
+    minimum_notice_days: number;
+    working_days: boolean;
+  };
 }
 
 export const FACILITY_SERVICES: readonly FacilityService[] = [
@@ -27,9 +31,21 @@ export const FACILITY_SERVICES: readonly FacilityService[] = [
     name: "CSE Sports Facilities Booking",
     category: "sports",
     url: "https://bs.cse.hku.hk/",
-    description: "Sports courts, training rooms and Active gym sessions. Personal booking opens seven days ahead.",
+    description: "Sports courts, training rooms and Active gym sessions. Personal booking opens seven days ahead. Cancel gym sessions at least one hour before use to avoid an access restriction.",
     lead_time: "Individual: 7 days; internal group form: 28 days.",
     booking: "portal",
+    cli: "hku facilities cse",
+  },
+  {
+    id: "cse-group",
+    name: "CSE Internal Group Sports Booking",
+    category: "sports",
+    url: "mailto:csebooking.officer@hku.hk?subject=Internal%20group%20sports%20booking%20request",
+    description: "Internal group booking form for CSE sports facilities. Submit the completed request to csebooking.officer@hku.hk.",
+    lead_time: "At least 28 days.",
+    booking: "form",
+    cli: "hku facilities prepare cse-group",
+    request_form: { minimum_notice_days: 28, working_days: false },
   },
   {
     id: "hkufbs",
@@ -39,6 +55,7 @@ export const FACILITY_SERVICES: readonly FacilityService[] = [
     description: "Music rooms and other campus spaces, including CYMAC, FSCAC and Main Building MB221.",
     lead_time: "CYMAC and FSCAC rooms require at least 3 days.",
     booking: "portal",
+    cli: "hku facilities hkufbs",
   },
   {
     id: "library-venue",
@@ -48,6 +65,8 @@ export const FACILITY_SERVICES: readonly FacilityService[] = [
     description: "Application form for a Library venue. Submit at least eight weeks in advance.",
     lead_time: "At least 8 weeks.",
     booking: "form",
+    cli: "hku facilities prepare library-venue",
+    request_form: { minimum_notice_days: 56, working_days: false },
   },
   {
     id: "dil",
@@ -57,6 +76,8 @@ export const FACILITY_SERVICES: readonly FacilityService[] = [
     description: "Application form for the Digital Interactive Lab.",
     lead_time: "At least 10 working days.",
     booking: "form",
+    cli: "hku facilities prepare dil",
+    request_form: { minimum_notice_days: 10, working_days: true },
   },
   {
     id: "lic-classroom",
@@ -66,6 +87,8 @@ export const FACILITY_SERVICES: readonly FacilityService[] = [
     description: "Application form for the LIC Classroom.",
     lead_time: "At least 10 working days.",
     booking: "form",
+    cli: "hku facilities prepare lic-classroom",
+    request_form: { minimum_notice_days: 10, working_days: true },
   },
 ];
 

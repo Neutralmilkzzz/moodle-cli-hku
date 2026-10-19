@@ -133,6 +133,16 @@ describe("Moodle MCP server", () => {
       "library_bookings",
       "library_book",
       "library_cancel",
+      "facility_services",
+      "facility_request_prepare",
+      "cse_sports_status",
+      "cse_sports_home",
+      "cse_sports_activities",
+      "cse_sports_slots",
+      "cse_sports_book",
+      "hkufbs_resources",
+      "hkufbs_slots",
+      "hkufbs_book",
     ]);
     const server = createMoodleMcpServer(fakeGateway(), { extraTools: tools });
     const listed = await server.handle({ jsonrpc: "2.0", id: "tools", method: "tools/list", params: modernParams() });
@@ -140,6 +150,13 @@ describe("Moodle MCP server", () => {
     expect(names).toEqual(expect.arrayContaining(["home", "library_slots", "mail_inbox"]));
     const mailSend = tools.find(tool => tool.name === "mail_send");
     expect(mailSend?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    const hkufbsBook = tools.find(tool => tool.name === "hkufbs_book");
+    expect(hkufbsBook?.inputSchema).toMatchObject({
+      properties: {
+        dry_run: { default: true },
+        accept_policy: { default: false },
+      },
+    });
   });
 
   it("keeps the reason when a submission is refused", async () => {

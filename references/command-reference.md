@@ -33,6 +33,26 @@ asks for confirmation (`--yes` skips it) and prints the receipt Moodle shows aft
 | moodle doctor | Diagnose runtime, browser access, session, background jobs and MCP setup. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
 | moodle download | Download files: one activity, a whole section, or a file URL. With no argument, browse. | [ref...] | --to (value required)<br>--dest (value required)<br>--force<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
 | moodle due | Items due in a date window. | [unit] | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required)<br>--days (value required)<br>--limit (value required) |
+| moodle facilities | Browse every HKU facility booking system and application form. |  |  |
+| moodle facilities cse | Use CSE Sports Facilities Booking with a durable HKU SSO session. |  |  |
+| moodle facilities cse activities | List live CSE sports activities and their booking codes. This is read-only. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle facilities cse book | Create one exact CSE sports booking. Defaults to a safe dry run. |  | -or-code, --activity (value required)<br>--date (value required)<br>-or-code, --venue (value required)<br>-or-code, --room (value required)<br>--start (value required)<br>--accept-policy<br>--confirm (value required)<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle facilities cse home | Read the signed-in CSE booking home page and its available booking links. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle facilities cse login | Open HKU SSO and save an encrypted CSE Sports Booking session. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle facilities cse logout | Remove the encrypted CSE Sports Booking session. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle facilities cse slots | List live CSE sports availability for one activity and date. This is read-only. |  | -or-code, --activity (value required)<br>--date (value required)<br>-or-code, --venue (value required)<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle facilities cse status | Check the saved CSE Sports Booking session. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle facilities hkufbs | Query HKUFBS campus rooms with a durable HKU SSO session. |  |  |
+| moodle facilities hkufbs book | Create one exact HKUFBS reservation. Defaults to a safe dry run. |  | -or-id, --resource (value required)<br>--date (value required)<br>--start (value required)<br>--end (value required)<br>--contact (value required)<br>--uid (value required)<br>--title (value required)<br>--description (value required)<br>--attribute (value required)<br>--accept-policy<br>-id, --confirm (value required)<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle facilities hkufbs login | Open HKU SSO and save an encrypted HKUFBS session. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle facilities hkufbs logout | Remove the encrypted HKUFBS session from this computer. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle facilities hkufbs resources | List live HKUFBS bookable resources and ids. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle facilities hkufbs slots | Find live HKUFBS openings. This is read-only. |  | --date (value required)<br>--end-date (value required)<br>-or-id, --resource (value required)<br>--duration (value required)<br>--start (value required)<br>--end (value required)<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle facilities hkufbs status | Check the saved HKUFBS session. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle facilities list | List all facility booking services covered by the article. |  | --category (value required)<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle facilities open | Open an official HKU facility booking service. | <id> | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle facilities prepare | Check a facility request's lead time and build the details needed for its official form. | <id> | --date (value required)<br>--purpose (value required)<br>--attendees (value required)<br>--requester (value required)<br>--contact (value required)<br>--open<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle facilities status | Check durable sessions for every facility system integrated by the CLI. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
 | moodle find | Ranked sections, activities and discussion subjects. | <query> [unit] | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required)<br>--limit (value required)<br>--types (value required) |
 | moodle forums | Inspect forums. |  |  |
 | moodle forums list | List forum activities in a unit. | <unit> | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required)<br>--limit (value required) |
@@ -43,14 +63,21 @@ asks for confirmation (`--yes` skips it) and prints the receipt Moodle shows aft
 | moodle library | Find HKU Library spaces and submit room reservations. |  |  |
 | moodle library book | Submit one exact HKUL NewBooking reservation after a live form check. | [url] | --library-id (value required)<br>--facility-type-id (value required)<br>--facility-id (value required)<br>--location (value required)<br>--type (value required)<br>--floor (value required)<br>--room (value required)<br>--date (value required)<br>--session (value required)<br>--start (value required)<br>--end (value required)<br>--description (value required)<br>--email (value required)<br>--accept-policy<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
 | moodle library bookings | List reservations in My Booking Record. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle library cancel | Cancel one exact booking from My Booking Record. |  | --date (value required)<br>--start (value required)<br>--end (value required)<br>--location (value required)<br>--floor (value required)<br>--room (value required)<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
 | moodle library facilities | List HKU Library bookable space types and live availability counts. |  | --library (value required)<br>--type (value required)<br>--available<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle library keepalive | Validate and touch the saved HKUL session; run periodically to avoid repeated SSO. |  | --renew<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle library keepalive install | Install a background job that keeps the saved HKUL session active. |  | --interval (value required)<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle library keepalive status | Show whether the HKUL keepalive job is installed. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle library keepalive uninstall | Remove the background HKUL keepalive job. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
 | moodle library login | Save or reuse a durable HKUL booking-system session. |  | --force<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
 | moodle library logout | Remove the saved HKUL Library booking session. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
 | moodle library open | Open the HKU Library booking site in your browser. | [url] | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
 | moodle library slots | List exact available rooms and time sessions for an HKUL location. |  | --location (value required)<br>--type (value required)<br>--date (value required)<br>--floor (value required)<br>--room (value required)<br>--start (value required)<br>--end (value required)<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
 | moodle library status | Check the saved HKUL Library booking session. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
 | moodle mail | Read and send mail through the forwarding 163 mailbox. |  |  |
-| moodle mail inbox | List recent messages in the HKU inbox. | [query] | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required)<br>--limit (value required)<br>--unread<br>--today |
+| moodle mail attachment | Save one attachment from a 163 mailbox message. | <uid> <index> | --dest (value required)<br>--force<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle mail attachments | List attachments on one 163 mailbox message. | <uid> | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
+| moodle mail inbox | List recent messages in the HKU inbox. | [query] | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required)<br>--limit (value required)<br>--unread<br>--today<br>--body |
 | moodle mail login | Save and verify the 163 mailbox address and authorization code. |  | --username (value required)<br>--pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
 | moodle mail logout | Remove the saved HKU mail session. |  | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |
 | moodle mail read | Read one 163 mailbox message. | <uid> | --pretty<br>--json<br>--yaml<br>--table<br>--fields (value required) |

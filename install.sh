@@ -12,7 +12,7 @@ version=${HKU_VERSION:-${MOODLE_VERSION:-latest}}
 if [ "$version" = latest ]; then
   base=https://github.com/Neutralmilkzzz/moodle-cli-hku/releases/latest/download
 else
-  case "$version" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo 'HKU_VERSION must be a release tag such as v0.13.0.' >&2; exit 1 ;; esac
+  case "$version" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo 'HKU_VERSION must be a release tag such as v0.14.0.' >&2; exit 1 ;; esac
   base="https://github.com/Neutralmilkzzz/moodle-cli-hku/releases/download/$version"
 fi
 curl -fL --retry 2 "$base/$asset" -o "$temporary/hku"

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 
 describe("HKU CLI service commands", () => {
-  it("describes mail and library in the command tree", async () => {
+  it("describes mail, library and facility systems in the command tree", async () => {
     const stdout = buffer(false);
     await expect(runCli(["node", "hku", "commands", "--json"], {
       stdout,
@@ -14,12 +14,22 @@ describe("HKU CLI service commands", () => {
       commands: Array<{ name: string; commands?: Array<{ name: string }> }>;
     };
     expect(tree.name).toBe("hku");
-    expect(tree.commands.map(command => command.name)).toEqual(expect.arrayContaining(["mail", "library", "status", "units"]));
+    expect(tree.commands.map(command => command.name)).toEqual(expect.arrayContaining(["mail", "library", "facilities", "status", "units"]));
     expect(tree.commands.find(command => command.name === "mail")?.commands?.map(command => command.name)).toEqual(
       expect.arrayContaining(["login", "status", "inbox", "read", "send"]),
     );
     expect(tree.commands.find(command => command.name === "library")?.commands?.map(command => command.name)).toEqual(
       expect.arrayContaining(["login", "logout", "keepalive", "facilities", "slots", "book", "bookings", "cancel"]),
+    );
+    const facilities = tree.commands.find(command => command.name === "facilities");
+    expect(facilities?.commands?.map(command => command.name)).toEqual(
+      expect.arrayContaining(["status", "list", "open", "prepare", "hkufbs", "cse"]),
+    );
+    const cse = facilities?.commands?.find(command => command.name === "cse") as unknown as {
+      commands?: Array<{ name: string }>;
+    };
+    expect(cse.commands?.map(command => command.name)).toEqual(
+      expect.arrayContaining(["status", "login", "home", "activities", "slots", "book"]),
     );
   });
 
@@ -58,6 +68,37 @@ describe("HKU CLI service commands", () => {
         subject: "Library room",
         body: "See you at 10:00.",
       },
+    });
+  });
+
+  it("prepares a form-backed facility request without submitting it", async () => {
+    const stdout = buffer(false);
+    await expect(runCli([
+      "node",
+      "hku",
+      "facilities",
+      "prepare",
+      "dil",
+      "--date",
+      "2030-01-15",
+      "--purpose",
+      "Interactive workshop",
+      "--attendees",
+      "24",
+      "--json",
+    ], {
+      stdout,
+      stderr: buffer(false),
+      stdin: { isTTY: false } as NodeJS.ReadStream,
+    })).resolves.toBe(0);
+    expect(JSON.parse(stdout.text())).toMatchObject({
+      service_id: "dil",
+      eligible: true,
+      notice: { value: 10, unit: "working days" },
+      checklist: expect.arrayContaining([
+        expect.stringContaining("Interactive workshop"),
+        expect.stringContaining("24"),
+      ]),
     });
   });
 

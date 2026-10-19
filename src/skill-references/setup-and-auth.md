@@ -8,10 +8,10 @@ Use the standalone installer from the repository for a bundled runtime, or insta
 
 ```bash
 npm install -g hku-cli
-moodle --version
+hku --version
 ```
 
-Use `npx moodle-cli --help` for a one-off run. Existing PyPI users should migrate with:
+Use `npx hku-cli --help` for a one-off run. Existing PyPI users should migrate with:
 
 ```bash
 uv tool uninstall moodle-cli
@@ -24,7 +24,7 @@ Standalone binaries are available from GitHub Releases for supported platforms.
 
 Set `MOODLE_BASE_URL` to the Moodle site root, such as `https://school.example.edu`. A URL ending in `/login/index.php`, `/my/`, or another page is invalid.
 
-For an interactive first run, allow the CLI to prompt for the root URL and save it under `~/.config/moodle-cli/config.yaml`.
+For an interactive first run, allow the CLI to prompt for the root URL and save it under `~/.config/hku-cli/config.yaml`.
 
 ## Authenticate
 
@@ -61,6 +61,33 @@ moodle auth login --json               # extract a session; open the browser if 
 On Linux, schedule `moodle auth keepalive --json` with cron instead of `install`.
 
 `moodle auth login` first checks local session sources. If none is valid, it opens Moodle's login page in the system browser and waits up to two minutes for the completed SSO/OAuth login.
+
+## HKU Mail, Library and Facilities
+
+The local HKU service tools use separate durable sessions:
+
+```bash
+hku mail login --username name@163.com
+hku library login
+hku library keepalive install
+hku library keepalive status
+hku facilities hkufbs login
+hku facilities cse login
+```
+
+HKUL and HKUFBS sessions are encrypted under `~/.config/hku-cli/state/`; login commands first reuse the CLI's browser profile, then open SSO only when needed. `hku library keepalive install` only touches the saved encrypted session. It never opens a browser or books a room.
+
+Use read-only commands before any mutation:
+
+```bash
+hku library slots --location "Chi Wah Learning Commons" --type "Study Room" --date YYYY-MM-DD
+hku library bookings
+hku facilities hkufbs resources
+hku facilities hkufbs slots --date YYYY-MM-DD --resource RESOURCE_ID --duration 60
+hku facilities prepare dil --date YYYY-MM-DD
+```
+
+`library book`, `library cancel`, `hkufbs book` and MCP facility mutations are dry runs by default. Never submit a real reservation as a test: rooms can impose no-show, payment, cancellation or future-account restrictions.
 
 ## Recover Failures
 

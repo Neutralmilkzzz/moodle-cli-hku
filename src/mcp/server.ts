@@ -96,7 +96,7 @@ export function createMoodleMcpServer(
   options: MoodleMcpServerOptions = {},
 ): MoodleMcpServer {
   const serverInfo = {
-    name: options.name ?? "moodle",
+    name: options.name ?? (options.extraTools?.length ? "hku" : "moodle"),
     version: options.version ?? VERSION,
   };
 
@@ -127,9 +127,11 @@ export function createMoodleMcpServer(
             capabilities: { tools: { listChanged: false } },
             serverInfo,
             instructions: [
-              gateway.submitAssignment
-                ? "Access to the authenticated user's Moodle data. Only submit writes; it defaults to a dry run."
-                : "Read-only access to the authenticated user's Moodle data.",
+              options.extraTools?.length
+                ? "Access to the authenticated user's Moodle data, forwarding mail, library spaces and HKU facility systems. Mutation tools default to dry runs where the service supports them."
+                : gateway.submitAssignment
+                  ? "Access to the authenticated user's Moodle data. Only submit writes; it defaults to a dry run."
+                  : "Read-only access to the authenticated user's Moodle data.",
               ...(options.instructions ?? []),
             ].join(" "),
           });

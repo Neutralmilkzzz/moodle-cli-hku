@@ -122,6 +122,11 @@ import {
   logoutLibrary,
 } from "./library.js";
 import {
+  installLibraryKeepalive,
+  libraryKeepaliveStatus,
+  uninstallLibraryKeepalive,
+} from "./library-keepalive.js";
+import {
   buildBookingUrl,
   filterLibraryFacilities,
   HKU_LIBRARY_PUBLIC_URL,
@@ -136,7 +141,34 @@ import {
   formatMailMessage,
 } from "./service-formatters.js";
 import { FACILITY_SERVICES, facilityById, type FacilityCategory } from "./facilities.js";
-import { formatFacilityCatalog } from "./facility-formatters.js";
+import {
+  formatCseActivities,
+  formatCseBooking,
+  formatCsePortal,
+  formatCseSlots,
+  formatFacilityCatalog,
+  formatHkufbsBooking,
+  formatHkufbsResources,
+  formatHkufbsSlots,
+} from "./facility-formatters.js";
+import { formatFacilityRequest, prepareFacilityRequest } from "./facility-requests.js";
+import {
+  bookCseSpace,
+  findCseSlots,
+  getCseSession,
+  getCseSessionStatus,
+  listCseActivities,
+  loadCsePortal,
+  logoutCse,
+} from "./cse.js";
+import {
+  bookHkufbsSpace,
+  findHkufbsSlots,
+  getHkufbsSession,
+  getHkufbsSessionStatus,
+  loadHkufbsCatalog,
+  logoutHkufbs,
+} from "./hkufbs.js";
 
 interface CliIO {
   stdout?: NodeJS.WriteStream | { write(chunk: string): boolean };
@@ -875,7 +907,7 @@ export function buildProgram(io: CliIO = {}): Command {
       await runtime.output({ logged_out: true }, () => "HKUL Library session removed.", options, false);
     },
   );
-  addOutputOptions(
+  const libraryKeepalive = addOutputOptions(
     library
       .command("keepalive")
       .description("Validate and touch the saved HKUL session; run periodically to avoid repeated SSO.")
@@ -902,8 +934,87 @@ export function buildProgram(io: CliIO = {}): Command {
       false,
     );
   });
+  addOutputOptions(
+    mutating(
+      libraryKeepalive
+        .command("install")
+        .description("Install a background job that keeps the saved HKUL session active.")
+        .option("--interval <minutes>", "Keepalive interval in minutes.", parsePositiveInt),
+    ),
+  ).action(async (options: OutputCommandOptions & { interval?: number }) => {
+    const globals = program.opts();
+    if (!await confirm(
+      { summary: `Install the HKUL keepalive job${options.interval ? ` with a ${options.interval}-minute interval` : ""}. It only touches an existing encrypted session and never opens a browser.` },
+      { yes: Boolean(globals.yes), dryRun: Boolean(globals.dryRun), interactive: human() },
+    )) return;
+    await getLibrarySession({
+      homeDir: io.homeDir,
+      env: io.env,
+      fetchImpl: io.fetchImpl,
+      interactive: false,
+    });
+    const result = await installLibraryKeepalive({
+      homeDir: io.homeDir,
+      intervalMinutes: options.interval,
+    });
+    await runtime.output(
+      result,
+      () => `HKUL keepalive installed: ${result.schedule} via ${result.scheduler}\nJob: ${result.path}\nLog: ${result.log_path}`,
+      options,
+      false,
+    );
+  });
+  addOutputOptions(
+    mutating(libraryKeepalive.command("uninstall").description("Remove the background HKUL keepalive job.")),
+  ).action(async (options: OutputCommandOptions) => {
+    const globals = program.opts();
+    if (!await confirm(
+      { summary: "Remove the background HKUL keepalive job." },
+      { yes: Boolean(globals.yes), dryRun: Boolean(globals.dryRun), interactive: human() },
+    )) return;
+    const result = await uninstallLibraryKeepalive({ homeDir: io.homeDir });
+    await runtime.output(result, () => `HKUL keepalive removed (${result.path})`, options, false);
+  });
+  addOutputOptions(
+    libraryKeepalive.command("status").description("Show whether the HKUL keepalive job is installed."),
+  ).action(async (options: OutputCommandOptions) => {
+    const result = await libraryKeepaliveStatus({ homeDir: io.homeDir });
+    await runtime.output(
+      result,
+      () => result.installed
+        ? `HKUL keepalive installed: ${result.schedule} via ${result.scheduler}\nJob: ${result.path}\nLog: ${result.log_path}`
+        : "HKUL keepalive is not installed.",
+      options,
+      false,
+    );
+  });
 
   const facilities = program.command("facilities").description("Browse every HKU facility booking system and application form.");
+  addOutputOptions(
+    facilities.command("status").description("Check durable sessions for every facility system integrated by the CLI."),
+  ).action(async (options: OutputCommandOptions) => {
+    const [libraryStatus, hkufbsStatus, cseStatus] = await Promise.all([
+      getLibrarySessionStatus({ homeDir: io.homeDir, env: io.env, fetchImpl: io.fetchImpl }),
+      getHkufbsSessionStatus({ homeDir: io.homeDir, env: io.env, platform: process.platform, fetchImpl: io.fetchImpl }),
+      getCseSessionStatus({ homeDir: io.homeDir, env: io.env, platform: process.platform, fetchImpl: io.fetchImpl }),
+    ]);
+    const status = {
+      library: libraryStatus.logged_in,
+      hkufbs: hkufbsStatus.logged_in,
+      cse: cseStatus.logged_in,
+    };
+    await runtime.output(
+      { services: status },
+      () => [
+        `HKUL Library: ${status.library ? "signed in" : "sign-in needed"}`,
+        `HKUFBS campus rooms: ${status.hkufbs ? "signed in" : "sign-in needed"}`,
+        `CSE Sports Facilities: ${status.cse ? "signed in" : "sign-in needed"}`,
+        "Form-backed requests: use hku facilities prepare ID --date YYYY-MM-DD",
+      ].join("\n"),
+      options,
+      false,
+    );
+  });
   addOutputOptions(
     facilities
       .command("list")
@@ -933,6 +1044,423 @@ export function buildProgram(io: CliIO = {}): Command {
     if (!service) throw new UsageError(`Unknown facility service '${id}'.`, "Run `hku facilities list`.");
     await openInBrowser(service.url);
     await runtime.output(service, () => `Opened ${service.name}\n${service.url}`, options, false);
+  });
+  addOutputOptions(
+    facilities
+      .command("prepare")
+      .description("Check a facility request's lead time and build the details needed for its official form.")
+      .argument("<id>", "Form-backed service id from hku facilities list")
+      .option("--date <date>", "Requested event date (YYYY-MM-DD).")
+      .option("--purpose <text>", "Purpose or activity.")
+      .option("--attendees <number>", "Estimated attendance.", parsePositiveInt)
+      .option("--requester <name>", "Requester name and HKU UID.")
+      .option("--contact <details>", "Contact number and HKU email.")
+      .option("--open", "Open the official form after producing the request checklist."),
+  ).action(async (id: string, options: OutputCommandOptions & {
+    date?: string;
+    purpose?: string;
+    attendees?: number;
+    requester?: string;
+    contact?: string;
+    open?: boolean;
+  }) => {
+    if (!options.date) throw new UsageError("Facility request preparation needs --date YYYY-MM-DD.");
+    const plan = prepareFacilityRequest({
+      service: id,
+      eventDate: options.date,
+      purpose: options.purpose,
+      attendees: options.attendees,
+      requester: options.requester,
+      contact: options.contact,
+    });
+    if (options.open) await openInBrowser(plan.form_url);
+    await runtime.output(plan, () => formatFacilityRequest(plan), options, false);
+  });
+  const hkufbs = facilities
+    .command("hkufbs")
+    .description("Query HKUFBS campus rooms with a durable HKU SSO session.");
+  addOutputOptions(hkufbs.command("status").description("Check the saved HKUFBS session.")).action(
+    async (options: OutputCommandOptions) => {
+      const status = await getHkufbsSessionStatus({
+        homeDir: io.homeDir,
+        env: io.env,
+        platform: process.platform,
+        fetchImpl: io.fetchImpl,
+      });
+      await runtime.output(
+        status,
+        () => status.logged_in
+          ? "HKUFBS is signed in."
+          : "HKUFBS is not signed in. Run hku facilities hkufbs login.",
+        options,
+        false,
+      );
+    },
+  );
+  addOutputOptions(
+    mutating(hkufbs.command("login").description("Open HKU SSO and save an encrypted HKUFBS session.")),
+  ).action(async (options: OutputCommandOptions) => {
+    const session = await getHkufbsSession({
+      homeDir: io.homeDir,
+      env: io.env,
+      platform: process.platform,
+      fetchImpl: io.fetchImpl,
+      interactive: human(),
+      noCache: true,
+      onBrowserOpened: () => stderr.write("A browser window opened. Complete HKU SSO; the session will be captured automatically.\n"),
+    });
+    await runtime.output(
+      { logged_in: true, source: session.source },
+      () => `HKUFBS session saved (${session.source}).`,
+      options,
+      false,
+    );
+  });
+  addOutputOptions(
+    mutating(hkufbs.command("logout").description("Remove the encrypted HKUFBS session from this computer.")),
+  ).action(async (options: OutputCommandOptions) => {
+    if (!await confirm(
+      { summary: "Remove the saved HKUFBS session from this computer." },
+      { yes: Boolean(program.opts().yes), dryRun: Boolean(program.opts().dryRun), interactive: human() },
+    )) return;
+    await logoutHkufbs({ homeDir: io.homeDir, env: io.env });
+    await runtime.output({ logged_out: true }, () => "HKUFBS session removed.", options, false);
+  });
+  addOutputOptions(hkufbs.command("resources").description("List live HKUFBS bookable resources and ids.")).action(
+    async (options: OutputCommandOptions) => {
+      const { catalog } = await loadHkufbsCatalog({
+        homeDir: io.homeDir,
+        env: io.env,
+        platform: process.platform,
+        fetchImpl: io.fetchImpl,
+        interactive: human(),
+      });
+      await runtime.output(
+        { resources: catalog.resources, total: catalog.resources.length },
+        () => formatHkufbsResources(catalog),
+        options,
+        false,
+      );
+    },
+  );
+  addOutputOptions(
+    hkufbs
+      .command("slots")
+      .description("Find live HKUFBS openings. This is read-only.")
+      .option("--date <date>", "Begin date (YYYY-MM-DD).")
+      .option("--end-date <date>", "End date for a range (YYYY-MM-DD).")
+      .option("--resource <name-or-id>", "Exact resource name or numeric id; defaults to all resources.")
+      .option("--duration <minutes>", "Required duration in minutes.", parsePositiveInt, 30)
+      .option("--start <time>", "Specific start time (HH:mm) for an exact-time search.")
+      .option("--end <time>", "Specific end time (HH:mm)."),
+  ).action(async (options: OutputCommandOptions & {
+    date?: string;
+    endDate?: string;
+    resource?: string;
+    duration: number;
+    start?: string;
+    end?: string;
+  }) => {
+    if (!options.date) throw new UsageError("HKUFBS slots needs --date YYYY-MM-DD.");
+    const result = await findHkufbsSlots({
+      date: options.date,
+      endDate: options.endDate,
+      resource: options.resource,
+      durationMinutes: options.duration,
+      start: options.start,
+      end: options.end,
+    }, {
+      homeDir: io.homeDir,
+      env: io.env,
+      platform: process.platform,
+      fetchImpl: io.fetchImpl,
+      interactive: human(),
+    });
+    await runtime.output(
+      { ...result, total: result.openings.length },
+      () => formatHkufbsSlots(result),
+      options,
+      false,
+    );
+  });
+  addOutputOptions(
+    mutating(
+      hkufbs
+        .command("book")
+        .description("Create one exact HKUFBS reservation. Defaults to a safe dry run.")
+        .option("--resource <name-or-id>", "Exact resource name or numeric id.")
+        .option("--date <date>", "Reservation date (YYYY-MM-DD).")
+        .option("--start <time>", "Start time (HH:mm).")
+        .option("--end <time>", "End time (HH:mm).")
+        .option("--contact <number>", "Required contact number for HKUFBS.")
+        .option("--uid <number>", "Required 10-digit Staff/Student UID.")
+        .option("--title <title>", "Reservation title.")
+        .option("--description <text>", "Reservation description.")
+        .option("--attribute <id=value>", "Additional required attribute; may be repeated.", collectPairs, {} as Record<string, string>)
+        .option("--accept-policy", "Accept the booking and no-show consequences; required for a real submission.")
+        .option("--confirm <resource-id>", "Must exactly match the live HKUFBS resource id for a real submission."),
+    ),
+  ).action(async (options: OutputCommandOptions & {
+    resource?: string;
+    date?: string;
+    start?: string;
+    end?: string;
+    contact?: string;
+    uid?: string;
+    title?: string;
+    description?: string;
+    attribute: Record<string, string>;
+    acceptPolicy?: boolean;
+    confirm?: string;
+  }) => {
+    if (!options.resource || !options.date || !options.start || !options.end) {
+      throw new UsageError("HKUFBS booking needs --resource, --date, --start and --end.");
+    }
+    const requestedReal = !program.opts().dryRun;
+    if (requestedReal && !options.acceptPolicy) {
+      throw new UsageError("A real HKUFBS submission requires --accept-policy.");
+    }
+    if (requestedReal && !program.opts().yes && !human()) {
+      throw new UsageError("A real HKUFBS submission requires --yes when stdin is not interactive.");
+    }
+    const bookingInput = {
+      resource: options.resource,
+      date: options.date,
+      start: options.start,
+      end: options.end,
+      contact: options.contact,
+      uid: options.uid,
+      title: options.title,
+      description: options.description,
+      attributes: options.attribute,
+      acceptPolicy: Boolean(options.acceptPolicy),
+    };
+    if (!requestedReal) {
+      const preview = await bookHkufbsSpace(bookingInput, {
+        homeDir: io.homeDir,
+        env: io.env,
+        platform: process.platform,
+        fetchImpl: io.fetchImpl,
+        interactive: false,
+        dryRun: true,
+      });
+      await runtime.output(preview, () => formatHkufbsBooking(preview), options, false);
+      return;
+    }
+    const preview = await bookHkufbsSpace(bookingInput, {
+      homeDir: io.homeDir,
+      env: io.env,
+      platform: process.platform,
+      fetchImpl: io.fetchImpl,
+      interactive: false,
+      dryRun: true,
+    });
+    if (options.confirm !== preview.plan.resource_id) {
+      throw new UsageError(
+        `Real HKUFBS submission requires --confirm ${preview.plan.resource_id}.`,
+        "This token must match the live HKUFBS resource id, not the room name.",
+      );
+    }
+    if (!await confirm({
+      summary: [
+        `Create ${preview.plan.resource} (${preview.plan.resource_id})`,
+        `${preview.plan.date} · ${preview.plan.start}-${preview.plan.end} (Asia/Hong_Kong)`,
+        "",
+        ...preview.plan.warnings,
+      ].join("\n"),
+    }, {
+      yes: Boolean(program.opts().yes),
+      dryRun: false,
+      interactive: human(),
+    })) return;
+    const receipt = await bookHkufbsSpace(bookingInput, {
+      homeDir: io.homeDir,
+      env: io.env,
+      platform: process.platform,
+      fetchImpl: io.fetchImpl,
+      interactive: false,
+      dryRun: false,
+    });
+    await runtime.output(receipt, () => formatHkufbsBooking(receipt), options, false);
+  });
+  const cse = facilities
+    .command("cse")
+    .description("Use CSE Sports Facilities Booking with a durable HKU SSO session.");
+  addOutputOptions(cse.command("status").description("Check the saved CSE Sports Booking session.")).action(
+    async (options: OutputCommandOptions) => {
+      const status = await getCseSessionStatus({
+        homeDir: io.homeDir,
+        env: io.env,
+        platform: process.platform,
+        fetchImpl: io.fetchImpl,
+      });
+      await runtime.output(
+        status,
+        () => status.logged_in
+          ? "CSE Sports Booking is signed in."
+          : "CSE Sports Booking is not signed in. Run hku facilities cse login.",
+        options,
+        false,
+      );
+    },
+  );
+  addOutputOptions(
+    mutating(cse.command("login").description("Open HKU SSO and save an encrypted CSE Sports Booking session.")),
+  ).action(async (options: OutputCommandOptions) => {
+    const session = await getCseSession({
+      homeDir: io.homeDir,
+      env: io.env,
+      platform: process.platform,
+      fetchImpl: io.fetchImpl,
+      interactive: human(),
+      noCache: true,
+      onBrowserOpened: () => stderr.write("A browser window opened. Complete HKU SSO; the CSE session will be captured automatically.\n"),
+    });
+    await runtime.output(
+      { logged_in: true, source: session.source },
+      () => `CSE Sports Booking session saved (${session.source}).`,
+      options,
+      false,
+    );
+  });
+  addOutputOptions(
+    mutating(cse.command("logout").description("Remove the encrypted CSE Sports Booking session.")),
+  ).action(async (options: OutputCommandOptions) => {
+    if (!await confirm(
+      { summary: "Remove the saved CSE Sports Booking session from this computer." },
+      { yes: Boolean(program.opts().yes), dryRun: Boolean(program.opts().dryRun), interactive: human() },
+    )) return;
+    await logoutCse({ homeDir: io.homeDir });
+    await runtime.output({ logged_out: true }, () => "CSE Sports Booking session removed.", options, false);
+  });
+  addOutputOptions(
+    cse.command("home").description("Read the signed-in CSE booking home page and its available booking links."),
+  ).action(async (options: OutputCommandOptions) => {
+    const page = await loadCsePortal({
+      homeDir: io.homeDir,
+      env: io.env,
+      platform: process.platform,
+      fetchImpl: io.fetchImpl,
+      interactive: human(),
+    });
+    await runtime.output({ ...page, link_count: page.links.length }, () => formatCsePortal(page), options, false);
+  });
+  addOutputOptions(
+    cse.command("activities").description("List live CSE sports activities and their booking codes. This is read-only."),
+  ).action(async (options: OutputCommandOptions) => {
+    const activities = await listCseActivities({ fetchImpl: io.fetchImpl });
+    await runtime.output(
+      { activities, total: activities.length },
+      () => formatCseActivities(activities),
+      options,
+      false,
+    );
+  });
+  addOutputOptions(
+    cse
+      .command("slots")
+      .description("List live CSE sports availability for one activity and date. This is read-only.")
+      .option("--activity <name-or-code>", "Exact CSE activity name or code.")
+      .option("--date <date>", "Date (YYYY-MM-DD).")
+      .option("--venue <name-or-code>", "Exact venue; defaults to every venue exposed for the activity."),
+  ).action(async (options: OutputCommandOptions & {
+    activity?: string;
+    date?: string;
+    venue?: string;
+  }) => {
+    if (!options.activity || !options.date) {
+      throw new UsageError("CSE slots needs --activity and --date YYYY-MM-DD.");
+    }
+    const result = await findCseSlots({
+      activity: options.activity,
+      date: options.date,
+      venue: options.venue,
+    }, { fetchImpl: io.fetchImpl });
+    await runtime.output(
+      { ...result, total: result.slots.length },
+      () => formatCseSlots(result),
+      options,
+      false,
+    );
+  });
+  addOutputOptions(
+    mutating(
+      cse
+        .command("book")
+        .description("Create one exact CSE sports booking. Defaults to a safe dry run.")
+        .option("--activity <name-or-code>", "Exact CSE activity name or code.")
+        .option("--date <date>", "Reservation date (YYYY-MM-DD).")
+        .option("--venue <name-or-code>", "Exact venue name or code.")
+        .option("--room <name-or-code>", "Exact room name or code.")
+        .option("--start <time>", "Exact slot start time (HH:mm).")
+        .option("--accept-policy", "Accept CSE cancellation and no-show consequences; required for a real submission.")
+        .option("--confirm <token>", "Must match ACTIVITY_CODE:ROOM_CODE:DATE:START for a real submission."),
+    ),
+  ).action(async (options: OutputCommandOptions & {
+    activity?: string;
+    date?: string;
+    venue?: string;
+    room?: string;
+    start?: string;
+    acceptPolicy?: boolean;
+    confirm?: string;
+  }) => {
+    if (!options.activity || !options.date || !options.room || !options.start) {
+      throw new UsageError("CSE booking needs --activity, --date, --room and --start.");
+    }
+    const requestedReal = !program.opts().dryRun;
+    if (requestedReal && !options.acceptPolicy) {
+      throw new UsageError("A real CSE submission requires --accept-policy.");
+    }
+    if (requestedReal && !program.opts().yes && !human()) {
+      throw new UsageError("A real CSE submission requires --yes when stdin is not interactive.");
+    }
+    const input = {
+      activity: options.activity,
+      date: options.date,
+      venue: options.venue,
+      room: options.room,
+      start: options.start,
+    };
+    if (!requestedReal) {
+      const preview = await bookCseSpace(input, { fetchImpl: io.fetchImpl, dryRun: true });
+      await runtime.output(preview, () => formatCseBooking(preview), options, false);
+      return;
+    }
+    const preview = await bookCseSpace(input, { fetchImpl: io.fetchImpl, dryRun: true });
+    const token = [
+      preview.plan.activity_code,
+      preview.plan.room_code,
+      preview.plan.date,
+      preview.plan.start_time,
+    ].join(":");
+    if (options.confirm !== token) {
+      throw new UsageError(
+        `Real CSE submission requires --confirm '${token}'.`,
+        "The token contains the exact activity, room, date and start time and prevents a different slot from being submitted.",
+      );
+    }
+    if (!await confirm({
+      summary: [
+        `Create ${preview.plan.activity}`,
+        `${preview.plan.venue} · ${preview.plan.room} (${preview.plan.room_code})`,
+        `${preview.plan.date} · ${preview.plan.start_time}-${preview.plan.end_time}`,
+        "",
+        ...preview.plan.warnings,
+      ].join("\n"),
+    }, {
+      yes: Boolean(program.opts().yes),
+      dryRun: false,
+      interactive: human(),
+    })) return;
+    const receipt = await bookCseSpace(input, {
+      homeDir: io.homeDir,
+      env: io.env,
+      platform: process.platform,
+      fetchImpl: io.fetchImpl,
+      dryRun: false,
+    });
+    await runtime.output(receipt, () => formatCseBooking(receipt), options, false);
   });
   addOutputOptions(
     library
@@ -1945,6 +2473,12 @@ function parseNonNegativeInt(value: string): number {
     throw new UsageError("Expected a non-negative integer.");
   }
   return parsed;
+}
+
+function collectPairs(value: string, previous: Record<string, string>): Record<string, string> {
+  const index = value.indexOf("=");
+  if (index <= 0) throw new UsageError("Expected --attribute KEY=VALUE.");
+  return { ...previous, [value.slice(0, index)]: value.slice(index + 1) };
 }
 
 function parseMcpConnectionMode(value: string): "bridge" | "remote" {

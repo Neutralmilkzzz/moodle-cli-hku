@@ -52,7 +52,10 @@ HKU mail is forwarded to a 163 mailbox. The CLI reads that mailbox over IMAPS an
 hku mail login --username name@163.com
 hku mail inbox --today --limit 100
 hku mail inbox --unread --search "library"
+hku mail inbox "booking" --body
 hku mail read <uid>
+hku mail attachments <uid>
+hku mail attachment <uid> 0 --dest ./booking.pdf
 ```
 
 Send with a preview or execute it explicitly:
@@ -82,9 +85,47 @@ hku library slots --location "Chi Wah Learning Commons" --type "Study Room" --da
 hku library book --room "Study Room 5" --floor CPD-1 --start 23:00 --end 23:45 --dry-run
 hku library book --room "Study Room 5" --floor CPD-1 --start 23:00 --end 23:45 --accept-policy --yes
 hku library bookings
+hku library cancel --date 2026-10-24 --start 10:00 --end 11:00 --location "Chi Wah Learning Commons" --floor CPD-1 --room "Study Room 5" --dry-run
+hku library keepalive
+hku library keepalive install
+hku library keepalive status
 ```
 
-The session is stored encrypted under `~/.config/hku-cli/state/`; ordinary `slots`, `book` and `bookings` calls reuse it. `hku library login --force` is only needed when SSO itself has expired. The CLI can resolve a room and time from live availability, or accept an official `NewBooking.aspx` URL/facility ids. It re-reads the signed-in form, verifies the date and exact session, refuses ambiguous forms, submits the ASP.NET form, checks the confirmation dialog, and verifies the success page. The live Chi Wah flow and post-booking acknowledgement email were exercised with a real reservation.
+The session is stored encrypted under `~/.config/hku-cli/state/`; ordinary `slots`, `book` and `bookings` calls reuse it. `hku library keepalive install` adds a background job that touches the saved session every 30 minutes without opening SSO. `hku library login --force` is only needed when SSO itself has expired. The CLI can resolve a room and time from live availability, or accept an official `NewBooking.aspx` URL/facility ids. It re-reads the signed-in form, verifies the date and exact session, refuses ambiguous forms, checks My Booking Record before submitting to avoid duplicates, and verifies the success page. Cancellation accepts only one exact booking record and defaults to a dry run. The live Chi Wah booking and acknowledgement-email flow have been exercised with explicit reservations.
+
+### HKU facility booking systems
+
+The article `2026｜如何优雅地预约校园设施` covers four distinct booking paths. The CLI keeps their rules together and provides the deepest working workflow each system exposes:
+
+```bash
+hku facilities list
+hku facilities open sports
+
+# HKUFBS campus, CYMAC and FSCAC rooms
+hku facilities hkufbs login
+hku facilities hkufbs resources
+hku facilities hkufbs slots --date 2026-10-24 --resource 2873 --duration 60
+hku facilities hkufbs book --resource 2873 --date 2026-10-24 --start 09:00 --end 10:00 --dry-run
+
+# CSE sports facilities
+hku facilities cse login
+hku facilities cse status
+hku facilities cse home
+hku facilities cse activities
+hku facilities cse slots --activity Golf::1 --date 2026-10-20
+hku facilities cse book --activity Golf::1 --date 2026-10-20 --venue SHB --room SHB1 --start 07:00 --dry-run
+
+# Library Venue, DIL and LIC Classroom application forms
+hku facilities prepare library-venue --date 2027-01-15
+hku facilities prepare dil --date 2027-01-15 --purpose "Workshop" --attendees 25
+hku facilities prepare lic-classroom --date 2027-01-15
+```
+
+HKUFBS uses the same encrypted-session pattern as HKUL. `slots` is read-only; `book` is a dry run unless `--yes`, `--accept-policy` and the exact live numeric `--confirm` resource id are supplied. The preflight re-checks the current opening, room notice period, duration limits, required UID/contact/participant fields, approval requirements and the site's cancellation/payment warnings. It never uses a real reservation as an endpoint probe.
+
+CSE activity and calendar queries are public and read-only. The authenticated session is used only for a real booking; both CSE and HKUFBS submissions require `--dry-run` for a preview, then exact confirmation tokens and explicit policy acceptance for execution. CSE's `activity` data distinguishes individual and group booking windows, and its calendar exposes free (`A`), booked (`B`), confirmed (`C`) and unavailable (`U`) room-slot states.
+
+The Library Venue requires at least eight weeks; DIL and LIC Classroom require at least ten working days. `facilities prepare` calculates those dates, emits the information needed by the official Microsoft Form, and optionally opens it with `--open`. Microsoft Forms requires the user's HKU Microsoft session, so the CLI intentionally does not submit those approval forms unattended.
 
 ## Moodle commands
 
@@ -449,7 +490,7 @@ The CLI, local MCP server and bridge do not install Wrangler. Cloudflare managem
 uses Wrangler on PATH, or downloads the pinned version into
 `~/.config/moodle-cli/tools/wrangler@VERSION`. A binary install needs Bun or Node/npm
 only when managing Cloudflare. Worker payloads are included in the binary.
-Background jobs are opt-in: keepalive and managed MCP renewal.
+Background jobs are opt-in: Moodle keepalive, HKUL keepalive and managed MCP renewal.
 
 `moodle uninstall --dry-run` previews cleanup. `moodle uninstall` removes local jobs;
 `--remote` also removes the selected Worker; `--purge` removes local configuration/cache
