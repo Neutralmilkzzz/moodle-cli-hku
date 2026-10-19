@@ -7,10 +7,13 @@ import {
   bookingWasAccepted,
   buildBookingConfirmationSubmission,
   buildBookingSubmission,
+  buildCancellationRequest,
+  cancellationMatches,
   confirmationMatches,
   HKU_LIBRARY_BOOKING_ORIGIN,
   HKU_LIBRARY_PUBLIC_URL,
   parseBookingForm,
+  parseBookingCancelTargets,
   parseBookingRecords,
   parseBookingUrl,
   parseHtmlForm,
@@ -20,6 +23,8 @@ import {
   type BookingPlan,
   type BookingUrlTarget,
   type LibraryAvailableSlot,
+  type LibraryBookingCancelTarget,
+  type LibraryBookingRecord,
   type LibraryFacilitiesResult,
 } from "./library-core.js";
 import { deleteSecureState, readSecureState, writeSecureState, type SecureStateOptions } from "./secure-state.js";
@@ -59,6 +64,22 @@ export interface LibraryAvailabilityResult {
   date: string;
   page_count: number;
   slots: LibraryAvailableSlot[];
+}
+
+export interface LibraryBookingResult {
+  plan: BookingPlan;
+  submitted: boolean;
+  accepted: boolean;
+  already_booked: boolean;
+}
+
+export interface LibraryCancellationQuery {
+  date: string;
+  start: string;
+  end: string;
+  location: string;
+  floor?: string;
+  facility: string;
 }
 
 export async function loadLibraryFacilities(
@@ -225,7 +246,7 @@ export async function bookLibrarySpace(
     email?: string;
     dryRun?: boolean;
   } = {},
-): Promise<{ plan: BookingPlan; submitted: boolean; accepted: boolean }> {
+): Promise<LibraryBookingResult> {
   trustSystemCertificates();
   const target = parseBookingUrl(targetUrl);
   const session = await getLibrarySession({ ...options, interactive: false });
@@ -238,7 +259,14 @@ export async function bookLibrarySpace(
     ...(options.startTime ? { startTime: options.startTime } : {}),
     ...(options.endTime ? { endTime: options.endTime } : {}),
   });
-  if (options.dryRun) return { plan: formPlan.plan, submitted: false, accepted: false };
+  const existing = (await readBookingRecords(jar, fetchImpl)).some(record =>
+    sameBooking(record, formPlan.plan));
+  if (options.dryRun) {
+    return { plan: formPlan.plan, submitted: false, accepted: false, already_booked: existing };
+  }
+  if (existing) {
+    return { plan: formPlan.plan, submitted: false, accepted: true, already_booked: true };
+  }
 
   const first = buildBookingSubmission(formPlan, {
     ...(options.description ? { description: options.description } : {}),
@@ -258,7 +286,7 @@ export async function bookLibrarySpace(
   const confirmationHtml = await firstResponse.response.text();
   if (!confirmationMatches(confirmationHtml, formPlan.plan)) {
     if (bookingWasAccepted(confirmationHtml)) {
-      return { plan: formPlan.plan, submitted: true, accepted: true };
+      return { plan: formPlan.plan, submitted: true, accepted: true, already_booked: false };
     }
     throw new CliError(
       "upstream",
@@ -267,22 +295,98 @@ export async function bookLibrarySpace(
   }
 
   const confirmed = buildBookingConfirmationSubmission(first.values, confirmationHtml);
-  const finalResponse = await fetchWithCookies(firstResponse.url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/x-www-form-urlencoded",
-      accept: "text/html, */*; q=0.01",
-      referer: target.url,
-    },
-    body: new URLSearchParams(confirmed.values).toString(),
-  }, jar, fetchImpl);
+  let finalResponse: Awaited<ReturnType<typeof fetchWithCookies>>;
+  try {
+    finalResponse = await fetchWithCookies(firstResponse.url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        accept: "text/html, */*; q=0.01",
+        referer: target.url,
+      },
+      body: new URLSearchParams(confirmed.values).toString(),
+    }, jar, fetchImpl);
+  } catch (error) {
+    if ((await readBookingRecords(jar, fetchImpl)).some(record => sameBooking(record, formPlan.plan))) {
+      return { plan: formPlan.plan, submitted: true, accepted: true, already_booked: false };
+    }
+    throw error;
+  }
   ensureBookingPage(finalResponse.url, finalResponse.response.status);
   const finalHtml = await finalResponse.response.text();
   const accepted = bookingWasAccepted(finalHtml);
   if (!accepted) {
     throw new CliError("upstream", "HKUL did not confirm the booking. Check My Booking Record before retrying.");
   }
-  return { plan: formPlan.plan, submitted: true, accepted };
+  return { plan: formPlan.plan, submitted: true, accepted, already_booked: false };
+}
+
+export async function planLibraryCancellation(
+  query: LibraryCancellationQuery,
+  options: LibraryServiceOptions = {},
+): Promise<LibraryBookingCancelTarget> {
+  const session = await getLibrarySession(options);
+  const jar = new CookieJar(session.cookies);
+  const page = await fetchWithCookies(LIBRARY_RECORDS_URL, { headers: { accept: "text/html" } }, jar, options.fetchImpl);
+  ensureBookingPage(page.url, page.response.status);
+  return resolveCancellationTarget(await page.response.text(), query);
+}
+
+export async function cancelLibraryBooking(
+  query: LibraryCancellationQuery,
+  options: LibraryServiceOptions & { dryRun?: boolean } = {},
+): Promise<{ cancelled: boolean; planned: LibraryBookingRecord; row_index: number }> {
+  trustSystemCertificates();
+  const session = await getLibrarySession(options);
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const jar = new CookieJar(session.cookies);
+  const page = await fetchWithCookies(LIBRARY_RECORDS_URL, { headers: { accept: "text/html" } }, jar, fetchImpl);
+  ensureBookingPage(page.url, page.response.status);
+  const html = await page.response.text();
+  const target = resolveCancellationTarget(html, query);
+  if (options.dryRun) {
+    return { cancelled: false, planned: target.record, row_index: target.index };
+  }
+
+  const initial = buildCancellationRequest(html, target);
+  const action = safeBookingAction(parseHtmlForm(html).action, LIBRARY_RECORDS_URL);
+  const confirmation = await fetchWithCookies(action, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      accept: "text/html",
+      referer: LIBRARY_RECORDS_URL,
+    },
+    body: new URLSearchParams(initial).toString(),
+  }, jar, fetchImpl);
+  ensureBookingPage(confirmation.url, confirmation.response.status);
+  const confirmationHtml = await confirmation.response.text();
+  if (!cancellationMatches(confirmationHtml, target.record)) {
+    throw new CliError("upstream", "HKUL did not return a cancellation confirmation matching the exact booking.");
+  }
+
+  const confirmationForm = parseHtmlForm(confirmationHtml);
+  const yes = confirmationForm.controls.find(control =>
+    control.id === "main_btnDeleteYes" && control.type === "submit" && /^yes$/iu.test(control.value));
+  if (!yes) throw new CliError("upstream", "HKUL did not return the expected cancellation confirmation control.");
+  const values = serializeHtmlForm(confirmationForm, { [yes.name]: "Yes" });
+  const final = await fetchWithCookies(safeBookingAction(confirmationForm.action, confirmation.url), {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      accept: "text/html",
+      referer: confirmation.url,
+    },
+    body: new URLSearchParams(values).toString(),
+  }, jar, fetchImpl);
+  ensureBookingPage(final.url, final.response.status);
+  await final.response.text();
+
+  const remaining = await readBookingRecords(jar, fetchImpl);
+  if (remaining.some(record => sameBooking(record, target.record))) {
+    throw new CliError("upstream", "HKUL still lists the booking after cancellation. Check My Booking Record.");
+  }
+  return { cancelled: true, planned: target.record, row_index: target.index };
 }
 
 export async function listLibraryBookings(
@@ -392,6 +496,52 @@ async function saveLibrarySession(cookies: WebCookie[], options: LibraryServiceO
     { version: 1, cookies, saved_at: Date.now() },
     secureOptions(options),
   );
+}
+
+async function readBookingRecords(
+  jar: CookieJar,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<LibraryBookingRecord[]> {
+  const page = await fetchWithCookies(LIBRARY_RECORDS_URL, { headers: { accept: "text/html" } }, jar, fetchImpl);
+  ensureBookingPage(page.url, page.response.status);
+  return parseBookingRecords(await page.response.text());
+}
+
+function resolveCancellationTarget(
+  html: string,
+  query: LibraryCancellationQuery,
+): LibraryBookingCancelTarget {
+  const normalized = (value?: string) => value?.trim().toLowerCase() || "";
+  const matches = parseBookingCancelTargets(html).filter(({ record }) =>
+    record.date === query.date
+    && record.start === query.start
+    && record.end === query.end
+    && normalized(record.location) === normalized(query.location)
+    && (!query.floor || normalized(record.floor) === normalized(query.floor))
+    && normalized(record.facility) === normalized(query.facility));
+  if (matches.length !== 1) {
+    throw new UsageError(
+      matches.length
+        ? "Multiple HKUL bookings match the cancellation target."
+        : "No exact HKUL booking matches the cancellation target.",
+      "Run `hku library bookings` and supply the exact date, start, end, location, floor, and room.",
+    );
+  }
+  return matches[0];
+}
+
+function sameBooking(record: LibraryBookingRecord, wanted: BookingPlan | LibraryBookingRecord): boolean {
+  const normalized = (value?: string) => value?.trim().toLowerCase() || "";
+  const start = "start_time" in wanted ? wanted.start_time : wanted.start;
+  const end = "end_time" in wanted ? wanted.end_time : wanted.end;
+  const facility = "facility" in wanted ? wanted.facility : undefined;
+  return record.date === wanted.date
+    && record.start === start
+    && record.end === end
+    && normalized(record.location) === normalized(wanted.location)
+    && normalized(record.floor) === normalized(wanted.floor)
+    && normalized(record.facility) === normalized(facility)
+    && normalized(record.status) === "booked";
 }
 
 function secureOptions(options: LibraryServiceOptions): SecureStateOptions {

@@ -32,6 +32,9 @@ export function formatMailMessage(message: MailMessage): string {
     message.received_at ? `Received: ${message.received_at}` : "",
     "",
     message.body,
+    ...(message.attachments.length
+      ? ["", "Attachments:", ...message.attachments.map(item => `  ${item.index} · ${item.name} · ${item.mime_type} · ${item.bytes} bytes`)]
+      : []),
   ].filter((line, index, lines) => line || lines[index - 1] !== "").join("\n");
 }
 

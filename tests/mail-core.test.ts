@@ -4,6 +4,7 @@ import {
   createMailConfig,
   decodeMimeMessage,
   normalizeAddresses,
+  parseMailAttachments,
   validateSendMail,
 } from "../src/mail-core.js";
 
@@ -74,5 +75,32 @@ describe("163 mail core", () => {
       subject: "Hello",
       body: "Body",
     })).toMatchObject({ to: ["target@hku.hk"], subject: "Hello" });
+  });
+
+  it("extracts attachment metadata and bytes", () => {
+    const raw = Buffer.from([
+      "From: sender@163.com",
+      "Subject: Files",
+      'Content-Type: multipart/mixed; boundary="mix"',
+      "",
+      "--mix",
+      "Content-Type: text/plain; charset=UTF-8",
+      "",
+      "See attached.",
+      "--mix",
+      'Content-Type: application/pdf; name="brief.pdf"',
+      'Content-Disposition: attachment; filename="brief.pdf"',
+      "Content-Transfer-Encoding: base64",
+      "",
+      Buffer.from("PDF").toString("base64"),
+      "--mix--",
+    ].join("\r\n"), "utf8");
+    expect(parseMailAttachments(raw)).toEqual([{
+      index: 0,
+      name: "brief.pdf",
+      mime_type: "application/pdf",
+      bytes: 3,
+      data: Buffer.from("PDF"),
+    }]);
   });
 });

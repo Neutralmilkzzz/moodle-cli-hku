@@ -366,8 +366,8 @@ describe("SessionBroker Durable Object", () => {
     }));
 
     const first = await (await initialize()).json() as { response: { result: { instructions: string } } };
-    expect(first.response.result.instructions).toContain("moodle-cli 99.0.0 is available");
-    expect(first.response.result.instructions).toContain("moodle update");
+    expect(first.response.result.instructions).toContain("hku-cli 99.0.0 is available");
+    expect(first.response.result.instructions).toContain("hku update");
     expect(registry).toHaveBeenCalledTimes(1);
 
     now += 60_000;

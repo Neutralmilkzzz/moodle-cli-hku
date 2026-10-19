@@ -29,6 +29,18 @@ export interface MailMessageSummary {
 export interface MailMessage extends MailMessageSummary {
   body: string;
   body_type: "text" | "html";
+  attachments: MailAttachmentInfo[];
+}
+
+export interface MailAttachmentInfo {
+  index: number;
+  name: string;
+  mime_type: string;
+  bytes: number;
+}
+
+export interface MailAttachment extends MailAttachmentInfo {
+  data: Buffer;
 }
 
 export interface SendMailInput {
@@ -43,6 +55,7 @@ interface ImapSearchOptions {
   limit?: number;
   unread?: boolean;
   search?: string;
+  searchBody?: boolean;
   since?: Date;
 }
 
@@ -81,15 +94,21 @@ export async function listMailMessages(
       ...(options.unread ? { unread: true } : {}),
       ...(options.since ? { since: options.since } : {}),
     });
-    const wanted = uids.slice(-Math.max(1, Math.min(500, options.limit ?? 20))).reverse();
+    const limit = Math.max(1, Math.min(500, options.limit ?? 20));
+    const poolSize = options.search && options.searchBody ? Math.max(limit, 200) : limit;
+    const wanted = uids.slice(-poolSize).reverse();
     const query = options.search?.trim().toLowerCase();
     const messages: MailMessageSummary[] = [];
     for (const uid of wanted) {
-      const item = await client.header(uid);
+      const item = options.searchBody ? await client.message(uid) : await client.header(uid);
       if (!item) continue;
       const summary = toSummary(item);
-      if (query && !`${summary.from}\n${summary.subject}`.toLowerCase().includes(query)) continue;
+      const searchable = options.searchBody
+        ? `${summary.from}\n${summary.subject}\n${decodeMimeMessage(item.raw).body}`
+        : `${summary.from}\n${summary.subject}`;
+      if (query && !searchable.toLowerCase().includes(query)) continue;
       messages.push(summary);
+      if (messages.length >= limit) break;
     }
     return messages;
   } finally {
@@ -112,10 +131,31 @@ export async function getMailMessage(config: MailConfig, uid: string): Promise<M
       to: summary.to.length ? summary.to : decoded.to,
       body: decoded.body,
       body_type: decoded.bodyType,
+      attachments: parseMailAttachments(item.raw).map(({ data: _data, ...info }) => info),
     };
   } finally {
     await client.close();
   }
+}
+
+export async function getMailAttachments(config: MailConfig, uid: string): Promise<MailAttachment[]> {
+  if (!/^\d+$/u.test(uid)) throw new UsageError("Mail message id must be an IMAP UID.");
+  const client = await ImapClient.connect(config);
+  try {
+    const item = await client.message(uid);
+    if (!item) throw new CliError("not_found", `Mail message ${uid} was not found.`);
+    return parseMailAttachments(item.raw);
+  } finally {
+    await client.close();
+  }
+}
+
+export function parseMailAttachments(raw: Buffer): MailAttachment[] {
+  const headers = parseHeaders(raw);
+  const bodyBytes = afterHeaders(raw);
+  const attachments: MailAttachment[] = [];
+  collectTextParts(headers, bodyBytes, [], [], attachments);
+  return attachments.map((attachment, index) => ({ ...attachment, index }));
 }
 
 export async function verifyMailLogin(config: MailConfig): Promise<void> {
@@ -472,15 +512,33 @@ function afterHeaders(raw: Buffer): Buffer {
   return separator >= 0 ? raw.subarray(separator + 4) : Buffer.alloc(0);
 }
 
-function collectTextParts(headers: Map<string, string>, body: Buffer, plain: string[], rich: string[]): void {
+function collectTextParts(
+  headers: Map<string, string>,
+  body: Buffer,
+  plain: string[],
+  rich: string[],
+  attachments: Omit<MailAttachment, "index">[] = [],
+): void {
   const contentType = parseContentType(headers.get("content-type") ?? "text/plain; charset=UTF-8");
   if (contentType.type.startsWith("multipart/") && contentType.params.boundary) {
     for (const part of splitMultipart(body, contentType.params.boundary)) {
       const partSeparator = part.indexOf(Buffer.from("\r\n\r\n"));
       const partHead = part.subarray(0, partSeparator >= 0 ? partSeparator : part.length);
       const partBody = partSeparator >= 0 ? part.subarray(partSeparator + 4) : Buffer.alloc(0);
-      collectTextParts(parseHeaders(Buffer.concat([partHead, Buffer.from("\r\n\r\n")])), partBody, plain, rich);
+      collectTextParts(parseHeaders(Buffer.concat([partHead, Buffer.from("\r\n\r\n")])), partBody, plain, rich, attachments);
     }
+    return;
+  }
+  const disposition = headers.get("content-disposition") ?? "";
+  const filename = contentType.params.name || dispositionParameter(disposition, "filename");
+  if (/^attachment\b/iu.test(disposition) || filename) {
+    const decoded = decodeTransfer(body, headers.get("content-transfer-encoding") ?? "7bit");
+    attachments.push({
+      name: decodeMimeWords(filename || `attachment-${attachments.length + 1}`),
+      mime_type: contentType.type || "application/octet-stream",
+      bytes: decoded.byteLength,
+      data: decoded,
+    });
     return;
   }
   if (!contentType.type.startsWith("text/")) return;
@@ -488,6 +546,11 @@ function collectTextParts(headers: Map<string, string>, body: Buffer, plain: str
   const text = decodeCharset(decoded, contentType.params.charset || "utf-8");
   if (contentType.type === "text/html") rich.push(text);
   else plain.push(text);
+}
+
+function dispositionParameter(value: string, name: string): string {
+  const match = new RegExp(`(?:^|;)\\s*${name}=(?:"([^"]*)"|([^;]*))`, "iu").exec(value);
+  return (match?.[1] ?? match?.[2] ?? "").trim();
 }
 
 function splitMultipart(body: Buffer, boundary: string): Buffer[] {

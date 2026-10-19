@@ -3,7 +3,7 @@ import { activityRow, itemRow, postRow, stripEmpty } from "./results.js";
 import { doctor, ownedJobs } from "./doctor.js";
 import { COVERAGE_FAILURES, coverageReport } from "./coverage.js";
 import { createProgressReporter } from "./mcp/deployment/progress.js";
-import { readFile, rm, readdir } from "node:fs/promises";
+import { readFile, rm, readdir, writeFile, access } from "node:fs/promises";
 import { homedir } from "node:os";
 import { DefaultRenewalIntegration } from "./mcp/renewal/index.js";
 import { CACHE_DIR_NAME, CONFIG_DIR_NAME, MOODLE_SESSION_COOKIE_PREFIX } from "./constants.js";
@@ -106,12 +106,14 @@ import {
   listHkuMail,
   logoutHkuMail,
   readHkuMail,
+  readHkuMailAttachments,
   sendHkuMail,
   getMailStatus,
 } from "./mail.js";
 import { validateSendMail } from "./mail-core.js";
 import {
   bookLibrarySpace,
+  cancelLibraryBooking,
   findLibrarySlots,
   getLibrarySession,
   getLibrarySessionStatus,
@@ -133,6 +135,8 @@ import {
   formatMailList,
   formatMailMessage,
 } from "./service-formatters.js";
+import { FACILITY_SERVICES, facilityById, type FacilityCategory } from "./facilities.js";
+import { formatFacilityCatalog } from "./facility-formatters.js";
 
 interface CliIO {
   stdout?: NodeJS.WriteStream | { write(chunk: string): boolean };
@@ -690,13 +694,15 @@ export function buildProgram(io: CliIO = {}): Command {
     .option("--limit <number>", "Maximum messages.", parsePositiveInt, 20)
     .option("--unread", "Only unread messages.")
     .option("--today", "Only messages received today in Asia/Shanghai.")
-    .action(async (query: string | undefined, options: OutputCommandOptions & { limit: number; unread?: boolean; today?: boolean }) => {
+    .option("--body", "Search message bodies as well as sender and subject.")
+    .action(async (query: string | undefined, options: OutputCommandOptions & { limit: number; unread?: boolean; today?: boolean; body?: boolean }) => {
       const messages = await listHkuMail({
         homeDir: io.homeDir,
         env: io.env,
         limit: runtime.count("limit", options.limit),
         unread: options.unread,
         ...(query ? { search: query } : {}),
+        searchBody: Boolean(options.body),
         ...(options.today ? { since: new Date() } : {}),
       });
       await runtime.output(
@@ -712,6 +718,46 @@ export function buildProgram(io: CliIO = {}): Command {
       await runtime.output({ message }, () => formatMailMessage(message), options, false);
     },
   );
+  addOutputOptions(mail.command("attachments").description("List attachments on one 163 mailbox message.").argument("<uid>", "IMAP message UID")).action(
+    async (uid: string, options: OutputCommandOptions) => {
+      const attachments = (await readHkuMailAttachments(uid, { homeDir: io.homeDir, env: io.env }))
+        .map(({ data: _data, ...info }) => info);
+      await runtime.output(
+        { attachments, total: attachments.length },
+        () => attachments.length
+          ? attachments.map(item => `${item.index} · ${item.name} · ${item.mime_type} · ${item.bytes} bytes`).join("\n")
+          : "No attachments.",
+        options,
+        false,
+      );
+    },
+  );
+  addOutputOptions(
+    mail.command("attachment")
+      .description("Save one attachment from a 163 mailbox message.")
+      .argument("<uid>", "IMAP message UID")
+      .argument("<index>", "Attachment index from `hku mail attachments`")
+      .option("--dest <path>", "Destination file or directory.")
+      .option("--force", "Overwrite an existing destination file."),
+  ).action(async (uid: string, index: string, options: OutputCommandOptions & { dest?: string; force?: boolean }) => {
+    const attachments = await readHkuMailAttachments(uid, { homeDir: io.homeDir, env: io.env });
+    const attachment = attachments[Number(index)];
+    if (!attachment) throw new UsageError(`Attachment ${index} does not exist.`);
+    const destination = path.resolve(
+      io.cwd ?? process.cwd(),
+      options.dest || path.basename(attachment.name).replace(/[<>:"/\\|?*\x00-\x1f]/gu, "_"),
+    );
+    if (!options.force && await access(destination).then(() => true, () => false)) {
+      throw new UsageError(`Destination already exists: ${destination}`, "Pass --force to overwrite it.");
+    }
+    await writeFile(destination, attachment.data, { mode: 0o600 });
+    await runtime.output(
+      { saved: destination, name: attachment.name, bytes: attachment.bytes },
+      () => `Saved ${attachment.name} to ${destination}`,
+      options,
+      false,
+    );
+  });
   addOutputOptions(
     mutating(
       mail
@@ -829,6 +875,65 @@ export function buildProgram(io: CliIO = {}): Command {
       await runtime.output({ logged_out: true }, () => "HKUL Library session removed.", options, false);
     },
   );
+  addOutputOptions(
+    library
+      .command("keepalive")
+      .description("Validate and touch the saved HKUL session; run periodically to avoid repeated SSO.")
+      .option("--renew", "If the saved session is expired, open HKU SSO instead of failing."),
+  ).action(async (options: OutputCommandOptions & { renew?: boolean }) => {
+    const session = await getLibrarySession({
+      homeDir: io.homeDir,
+      env: io.env,
+      fetchImpl: io.fetchImpl,
+      interactive: Boolean(options.renew) && human(),
+      noCache: false,
+    });
+    const status = await getLibrarySessionStatus({
+      homeDir: io.homeDir,
+      env: io.env,
+      fetchImpl: io.fetchImpl,
+    });
+    await runtime.output(
+      { logged_in: status.logged_in, source: session.source, checked_at: new Date().toISOString() },
+      () => status.logged_in
+        ? `HKUL session is alive (${session.source}).`
+        : "HKUL session is not alive. Run hku library login --force.",
+      options,
+      false,
+    );
+  });
+
+  const facilities = program.command("facilities").description("Browse every HKU facility booking system and application form.");
+  addOutputOptions(
+    facilities
+      .command("list")
+      .description("List all facility booking services covered by the article.")
+      .option("--category <category>", "Filter by library, sports, campus, or forms."),
+  ).action(async (options: OutputCommandOptions & { category?: string }) => {
+    const category = options.category?.trim().toLowerCase();
+    if (category && !["library", "sports", "campus", "forms"].includes(category)) {
+      throw new UsageError("Facility category must be library, sports, campus, or forms.");
+    }
+    const services = FACILITY_SERVICES.filter(service =>
+      !category || service.category === category as FacilityCategory);
+    await runtime.output(
+      { services, total: services.length },
+      () => formatFacilityCatalog(services),
+      options,
+      false,
+    );
+  });
+  addOutputOptions(
+    facilities
+      .command("open")
+      .description("Open an official HKU facility booking service.")
+      .argument("<id>", "Service id from hku facilities list"),
+  ).action(async (id: string, options: OutputCommandOptions) => {
+    const service = facilityById(id);
+    if (!service) throw new UsageError(`Unknown facility service '${id}'.`, "Run `hku facilities list`.");
+    await openInBrowser(service.url);
+    await runtime.output(service, () => `Opened ${service.name}\n${service.url}`, options, false);
+  });
   addOutputOptions(
     library
       .command("facilities")
@@ -982,7 +1087,10 @@ export function buildProgram(io: CliIO = {}): Command {
         email: options.email,
       });
       if (program.opts().dryRun) {
-        await runtime.output({ planned: plan.plan }, () => formatBookingPlan(plan.plan, false, false), options, false);
+        await runtime.output({ planned: plan.plan, already_booked: plan.already_booked }, () => [
+          formatBookingPlan(plan.plan, false, false),
+          ...(plan.already_booked ? ["This exact booking is already present in My Booking Record."] : []),
+        ].join("\n\n"), options, false);
         return;
       }
       if (!program.opts().yes && !human()) {
@@ -1011,7 +1119,9 @@ export function buildProgram(io: CliIO = {}): Command {
       });
       await runtime.output(
         receipt,
-        () => formatBookingPlan(receipt.plan, receipt.submitted, receipt.accepted),
+        () => receipt.already_booked
+          ? `This exact booking is already present; no duplicate was submitted.\n${formatBookingPlan(receipt.plan, false, false)}`
+          : formatBookingPlan(receipt.plan, receipt.submitted, receipt.accepted),
         options,
         false,
       );
@@ -1028,6 +1138,77 @@ export function buildProgram(io: CliIO = {}): Command {
       await runtime.output({ bookings, total: bookings.length }, () => bookings.length
         ? bookings.map(item => [item.date, item.time, item.location, item.floor, item.facility, item.status].filter(Boolean).join(" · ")).join("\n")
         : "No library bookings found.", options, false);
+    },
+  );
+  addOutputOptions(
+    mutating(
+      library
+        .command("cancel")
+        .description("Cancel one exact booking from My Booking Record.")
+        .option("--date <date>", "Booking date (YYYY-MM-DD).")
+        .option("--start <time>", "Exact booking start time (HH:mm).")
+        .option("--end <time>", "Exact booking end time (HH:mm).")
+        .option("--location <name>", "Exact location name.")
+        .option("--floor <floor>", "Exact floor label, such as CPD-1.")
+        .option("--room <room>", "Exact room name."),
+    ),
+  ).action(
+    async (options: OutputCommandOptions & {
+      date?: string;
+      start?: string;
+      end?: string;
+      location?: string;
+      floor?: string;
+      room?: string;
+    }) => {
+      if (!options.date || !options.start || !options.end || !options.location || !options.room) {
+        throw new UsageError(
+          "Cancellation needs --date, --start, --end, --location and --room.",
+          "Run `hku library bookings` first and copy the exact booking fields.",
+        );
+      }
+      const query = {
+        date: options.date,
+        start: options.start,
+        end: options.end,
+        location: options.location,
+        facility: options.room,
+        floor: options.floor,
+      };
+      if (program.opts().dryRun) {
+        const result = await cancelLibraryBooking(query, {
+          homeDir: io.homeDir,
+          env: io.env,
+          fetchImpl: io.fetchImpl,
+          dryRun: true,
+        });
+        await runtime.output({ planned: result }, () => [
+          "Would cancel:",
+          `${result.planned.location} · ${result.planned.floor || ""} · ${result.planned.facility}`,
+          `${result.planned.date} · ${result.planned.time}`,
+        ].join("\n"), options, false);
+        return;
+      }
+      if (!program.opts().yes && !human()) {
+        throw new UsageError("Cancelling a library booking requires --yes when stdin is not interactive.");
+      }
+      const palette = theme();
+      if (!await confirm({
+        summary: [
+          `Cancel ${palette.target(options.room)}`,
+          `${options.location}${options.floor ? ` · ${options.floor}` : ""}`,
+          `${options.date} · ${options.start}-${options.end}`,
+          "",
+          palette.tone("warning", "This removes the real HKUL reservation."),
+        ].join("\n"),
+      }, { yes: Boolean(program.opts().yes), dryRun: false, interactive: human() })) return;
+      const result = await cancelLibraryBooking(query, {
+        homeDir: io.homeDir,
+        env: io.env,
+        fetchImpl: io.fetchImpl,
+        dryRun: false,
+      });
+      await runtime.output(result, () => `Cancelled ${result.planned.facility} · ${result.planned.date} · ${result.planned.time}.`, options, false);
     },
   );
   addOutputOptions(
@@ -1550,7 +1731,7 @@ export function buildProgram(io: CliIO = {}): Command {
 
 // Grouped the way `gh` does: what a person reaches for daily, then the rest, then what only an agent runs.
 const HELP_SECTIONS: Readonly<Record<string, readonly string[]>> = {
-  "HKU services": ["status", "mail", "library"],
+  "HKU services": ["status", "mail", "library", "facilities"],
   "Moodle": ["due", "news", "find", "get", "open", "submit", "quiz", "units", "activities", "grades", "threads", "forums"],
   "Additional commands": ["sync", "user", "todo", "alerts", "overview", "download", "auth", "doctor", "coverage", "completion", "uninstall"],
   "Agent commands": ["mcp", "commands", "skills"],

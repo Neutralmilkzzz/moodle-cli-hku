@@ -6,9 +6,9 @@
 
 `hku-cli` keeps the full Moodle workflow from `moodle-cli`, reads forwarded university mail from a 163 mailbox over IMAP, sends through 163 SMTP, and adds live HKU Library space availability with guarded room-booking submission. It works as `hku` without breaking the original `moodle` executable.
 
-[![npm version](https://img.shields.io/npm/v/moodle-cli?logo=npm)](https://www.npmjs.com/package/moodle-cli)
-[![CI](https://github.com/bunizao/moodle-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/bunizao/moodle-cli/actions/workflows/ci.yml)
-[![Node.js 22.13+](https://img.shields.io/badge/Node.js-22.13%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![npm version](https://img.shields.io/npm/v/hku-cli?logo=npm)](https://www.npmjs.com/package/hku-cli)
+[![CI](https://github.com/Neutralmilkzzz/moodle-cli-hku/actions/workflows/ci.yml/badge.svg)](https://github.com/Neutralmilkzzz/moodle-cli-hku/actions/workflows/ci.yml)
+[![Node.js 22.15+](https://img.shields.io/badge/Node.js-22.15%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![Bun](https://img.shields.io/badge/Bun-supported-fbf0df?logo=bun&logoColor=black)](https://bun.sh/)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -27,7 +27,7 @@
 
 ## Build and install
 
-Node.js 22.13+ is required for browser-cookie access. From this repository:
+Node.js 22.15+ is required for browser-cookie access. From this repository:
 
 ```bash
 npm ci
@@ -97,7 +97,7 @@ Moodle commands keep the original CLI contract: courses, deadlines, grades, file
 Paste this into Codex, Claude Code, OpenClaw, Hermes Agent, or another agent that can use your terminal:
 
 ```text
-Can you use https://github.com/bunizao/moodle-cli/raw/main/ONBOARDING.md to help me set up moodle-cli?
+Can you use https://github.com/Neutralmilkzzz/moodle-cli-hku/raw/main/ONBOARDING.md to help me set up hku-cli?
 ```
 
 Your agent asks for your Moodle URL and opens your university's sign-in page when needed. Finish SSO in the browser while the agent waits; it verifies your account and sets up session renewal before reading Moodle. The same onboarding can deploy a private remote MCP server through your Cloudflare account.
@@ -107,27 +107,27 @@ Your agent asks for your Moodle URL and opens your university's sign-in page whe
 For macOS arm64 or Linux x64, install the standalone binary with its bundled runtime:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/bunizao/moodle-cli/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Neutralmilkzzz/moodle-cli-hku/main/install.sh | sh
 moodle doctor
 ```
 
-Or use Node.js 22.13+ (for SQLite browser stores) or Bun:
+Or use Node.js 22.15+ (for SQLite browser stores) or Bun:
 
 ```bash
 # npm
-npm install -g moodle-cli
+npm install -g hku-cli
 
 # Bun
-bun add --global moodle-cli
+bun add --global hku-cli
 
-moodle --version
+hku --version
 ```
 
 Run without a global install:
 
 ```bash
-npx moodle-cli --help
-bunx --bun moodle-cli --help
+npx hku-cli --help
+bunx --bun hku-cli --help
 ```
 
 Sign in and open your dashboard:
@@ -147,7 +147,7 @@ moodle auth login --paste
 
 The prompt does not echo, and the value is kept in the encrypted session cache, so this is a one-time step. Paste whatever the browser gives you: in the developer tools' Network tab, `Copy as cURL` on any request to the site carries the cookie, as does the `MoodleSession` value from the cookie panel.
 
-Keep the session active on macOS with `moodle auth keepalive install`. On Linux, schedule `moodle auth keepalive --json` every 30 minutes with cron.
+Keep the session active on macOS with `hku auth keepalive install`. On Linux, schedule `hku auth keepalive --json` every 30 minutes with cron.
 
 GitHub Releases also provide standalone binaries for macOS arm64 and Linux x64.
 
@@ -331,8 +331,8 @@ Install the generated skill bundle:
 moodle skills add
 
 # Direct alternatives
-npx skills add https://github.com/bunizao/moodle-cli
-bunx --bun skills add https://github.com/bunizao/moodle-cli
+npx skills add https://github.com/Neutralmilkzzz/moodle-cli-hku
+bunx --bun skills add https://github.com/Neutralmilkzzz/moodle-cli-hku
 ```
 
 [`SKILL.md`](SKILL.md) routes agents to focused setup, coursework, forum, download, and maintenance guidance under [`references/`](references/).
@@ -453,8 +453,8 @@ Background jobs are opt-in: keepalive and managed MCP renewal.
 
 `moodle uninstall --dry-run` previews cleanup. `moodle uninstall` removes local jobs;
 `--remote` also removes the selected Worker; `--purge` removes local configuration/cache
-after deployments have been removed. Finish with `npm rm -g moodle-cli`,
-`bun remove -g moodle-cli`, or removal of the standalone executable. Package-manager
+after deployments have been removed. Finish with `npm rm -g hku-cli`,
+`bun remove -g hku-cli`, or removal of the standalone executable. Package-manager
 execution caches are managed by npm/Bun themselves.
 
 ## 0.8 structured output migration
@@ -488,7 +488,7 @@ unicorn is one project in two layers. The live tools answer what is there now; u
 | Project | Layer | What it does | Repo |
 | --- | --- | --- | --- |
 | unicorn | Memory | A Cloudflare Worker on your own account. Reads Moodle, Ed, Canvas, Gmail and feeds every hour, remembers what each said, and tells your AI agent what changed. | [TuuHub/unicorn](https://github.com/TuuHub/unicorn) |
-| **moodle-cli** (you are here) | **Live** | **Moodle from the terminal and MCP: units, deadlines, grades, forums, files, submissions.** | [bunizao/moodle-cli](https://github.com/bunizao/moodle-cli) |
+| **hku-cli** (you are here) | **Live** | **HKU Moodle, mail and facility booking from the terminal and MCP.** | [Neutralmilkzzz/moodle-cli-hku](https://github.com/Neutralmilkzzz/moodle-cli-hku) |
 | edstem-cli | Live | Ed Discussion from the terminal and MCP: units, threads, lessons, files, posting. | [bunizao/edstem-cli](https://github.com/bunizao/edstem-cli) |
 | ontrack | Live | OnTrack / Doubtfire from the terminal: units, tasks, chats, submissions. CLI only, no MCP server. | [bunizao/ontrack-cli](https://github.com/bunizao/ontrack-cli) |
 

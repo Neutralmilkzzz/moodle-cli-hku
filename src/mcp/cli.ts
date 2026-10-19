@@ -63,6 +63,7 @@ import {
   type RenewalSnapshot,
 } from "./renewal/index.js";
 import { createMoodleGateway } from "./gateway.js";
+import { createHkuMcpTools } from "./hku-tools.js";
 import { SUPPORTED_PROTOCOL_VERSIONS } from "./protocol.js";
 import { createMoodleMcpServer } from "./server.js";
 import { serveMoodleMcpStdio } from "./stdio.js";
@@ -559,7 +560,14 @@ class DefaultMcpCommandService implements McpCommandService {
       fetchImpl: this.options.fetchImpl,
       homeDir: this.homeDirectory,
     });
-    const server = createMoodleMcpServer(createMoodleGateway(client), { version: VERSION });
+    const server = createMoodleMcpServer(createMoodleGateway(client), {
+      version: VERSION,
+      extraTools: createHkuMcpTools({
+        env: this.options.env,
+        homeDir: this.homeDirectory,
+        fetchImpl: this.options.fetchImpl,
+      }),
+    });
     await serveMoodleMcpStdio(server, { input: stdin, output: stdout });
   }
 

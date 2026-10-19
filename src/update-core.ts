@@ -3,13 +3,13 @@
 
 import { GITHUB_RELEASES_URL } from "./constants.js";
 
-export const PACKAGE_NAME = "moodle-cli";
+export const PACKAGE_NAME = "hku-cli";
 // The dist-tags document is a few bytes; the full packument is hundreds of kilobytes.
 export const LATEST_VERSION_URL = `https://registry.npmjs.org/-/package/${PACKAGE_NAME}/dist-tags`;
 export const UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1000;
 // An unreachable registry is retried sooner than a successful check, but not on every command.
 export const UPDATE_RETRY_MS = 60 * 60 * 1000;
-export const GITHUB_REPOSITORY = "bunizao/moodle-cli";
+export const GITHUB_REPOSITORY = "Neutralmilkzzz/moodle-cli-hku";
 
 export interface LatestVersionRecord {
   latest: string;
@@ -46,11 +46,11 @@ export async function fetchLatestVersion(fetchImpl: typeof fetch = fetch, timeou
 }
 
 export function updateHint(current: string, latest: string): string {
-  return `moodle-cli ${latest} is available (running ${current}). Run: moodle update`;
+  return `hku-cli ${latest} is available (running ${current}). Run: hku update`;
 }
 
 export function standaloneUpdateHint(current: string, latest: string): string {
-  return `moodle-cli ${latest} is available (running ${current}). Run: moodle update`;
+  return `hku-cli ${latest} is available (running ${current}). Run: hku update`;
 }
 
 const STANDALONE_TARGETS = new Set(["darwin-arm64", "linux-x64"]);
@@ -59,7 +59,7 @@ const STANDALONE_TARGETS = new Set(["darwin-arm64", "linux-x64"]);
 export function standaloneAssetUrl(version: string, platform: string, arch: string): string | null {
   const target = `${platform}-${arch}`;
   if (!STANDALONE_TARGETS.has(target)) return null;
-  return `https://github.com/${GITHUB_REPOSITORY}/releases/download/v${version}/moodle-${target}`;
+  return `https://github.com/${GITHUB_REPOSITORY}/releases/download/v${version}/hku-${target}`;
 }
 
 export { GITHUB_RELEASES_URL };

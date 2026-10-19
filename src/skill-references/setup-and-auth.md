@@ -7,7 +7,7 @@ Read this file for installation, first-run configuration, browser-session reuse,
 Use the standalone installer from the repository for a bundled runtime, or install the npm package:
 
 ```bash
-npm install -g moodle-cli
+npm install -g hku-cli
 moodle --version
 ```
 
@@ -15,7 +15,7 @@ Use `npx moodle-cli --help` for a one-off run. Existing PyPI users should migrat
 
 ```bash
 uv tool uninstall moodle-cli
-npm install -g moodle-cli
+npm install -g hku-cli
 ```
 
 Standalone binaries are available from GitHub Releases for supported platforms.
@@ -91,7 +91,7 @@ moodle mcp remove
 When there is no desktop browser to read a Moodle cookie from (a hosted sandbox or cloud agent), install the CLI and deploy without a local session. The sandbox needs network access to the npm registry, `api.cloudflare.com`, `dash.cloudflare.com` and `*.workers.dev`.
 
 ```bash
-npm install -g moodle-cli
+npm install -g hku-cli
 MOODLE_BASE_URL=https://moodle.example.edu moodle mcp deploy --remote-login --yes --json > deploy.json 2> deploy.log &
 ```
 

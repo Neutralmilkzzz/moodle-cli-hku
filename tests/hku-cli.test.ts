@@ -19,7 +19,7 @@ describe("HKU CLI service commands", () => {
       expect.arrayContaining(["login", "status", "inbox", "read", "send"]),
     );
     expect(tree.commands.find(command => command.name === "library")?.commands?.map(command => command.name)).toEqual(
-      expect.arrayContaining(["login", "logout", "facilities", "slots", "book", "bookings"]),
+      expect.arrayContaining(["login", "logout", "keepalive", "facilities", "slots", "book", "bookings", "cancel"]),
     );
   });
 

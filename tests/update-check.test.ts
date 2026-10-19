@@ -64,7 +64,7 @@ describe("startupUpdateNotice", () => {
     await writeUpdateCache({ latest: "1.0.0", checked_at: NOW }, homeDir);
     const file = updateCachePath(homeDir);
     expect(JSON.parse(await readFile(file, "utf8"))).toEqual({ latest: "1.0.0", checked_at: NOW });
-    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect((await stat(file)).mode & 0o777).toBe(0o600);
   });
 });
 
@@ -85,14 +85,14 @@ describe("replaceStandalone", () => {
     const execPath = join(homeDir, "moodle");
     await writeFile(execPath, "old", { mode: 0o755 });
     const fetchImpl = vi.fn<typeof fetch>(async (input) => {
-      expect(String(input)).toBe("https://github.com/bunizao/moodle-cli/releases/download/v2.0.0/moodle-darwin-arm64");
+      expect(String(input)).toBe("https://github.com/Neutralmilkzzz/moodle-cli-hku/releases/download/v2.0.0/hku-darwin-arm64");
       return new Response("new binary");
     });
     const probed: string[] = [];
     expect(await replaceStandalone(execPath, "2.0.0", fetchImpl, { platform: "darwin", arch: "arm64" }, file => { probed.push(file); return "2.0.0\n"; })).toBeNull();
     expect(probed).toEqual([expect.stringMatching(/moodle\.\d+\.download$/u)]);
     expect(await readFile(execPath, "utf8")).toBe("new binary");
-    expect((await stat(execPath)).mode & 0o111).toBe(0o111);
+    if (process.platform !== "win32") expect((await stat(execPath)).mode & 0o111).toBe(0o111);
     expect(await readdir(homeDir)).toEqual(["moodle"]);
   });
 
@@ -122,9 +122,9 @@ describe("installCommand", () => {
     expect(npmGlobalPrefix("C:\\Users\\u\\AppData\\Roaming\\npm\\node_modules\\moodle-cli\\dist\\moodle.js", "win32")).toBe("C:\\Users\\u\\AppData\\Roaming\\npm");
     // npx keeps packages in a cache that is not a global prefix; a global install there would land in the wrong tree.
     expect(npmGlobalPrefix("/home/u/.npm/_npx/abc/node_modules/moodle-cli/dist/moodle.js", "linux")).toBeUndefined();
-    expect(installCommand("npm", "2.0.0", "/opt/homebrew/lib/node_modules/moodle-cli/dist/moodle.js", "darwin")?.args).toEqual(["install", "-g", "--prefix", "/opt/homebrew", "moodle-cli@2.0.0"]);
-    expect(installCommand("npm", "2.0.0", "/tmp/checkout/dist/moodle.js", "linux")?.args).toEqual(["install", "-g", "moodle-cli@2.0.0"]);
-    expect(installCommand("bun", "2.0.0")?.args).toEqual(["add", "--global", "moodle-cli@2.0.0"]);
+    expect(installCommand("npm", "2.0.0", "/opt/homebrew/lib/node_modules/hku-cli/dist/hku.js", "darwin")?.args).toEqual(["install", "-g", "--prefix", "/opt/homebrew", "hku-cli@2.0.0"]);
+    expect(installCommand("npm", "2.0.0", "/tmp/checkout/dist/hku.js", "linux")?.args).toEqual(["install", "-g", "hku-cli@2.0.0"]);
+    expect(installCommand("bun", "2.0.0")?.args).toEqual(["add", "--global", "hku-cli@2.0.0"]);
     expect(installCommand("standalone", "2.0.0")).toBeNull();
   });
 });
@@ -161,7 +161,7 @@ describe("runUpdate", () => {
 
     expect(report).toMatchObject({ current: VERSION, latest: "99.0.0", install: "npm", updated: true, deployed: true, ok: true });
     const script = "/usr/local/lib/node_modules/moodle-cli/dist/moodle.js";
-    expect(calls).toEqual([["/bin/npm", "install", "-g", "--prefix", "/usr/local", "moodle-cli@99.0.0"], ["/usr/bin/node", script, "--version"], ["/usr/bin/node", script, "mcp", "deploy", "--yes"]]);
+    expect(calls).toEqual([["/bin/npm", "install", "-g", "--prefix", "/usr/local", "hku-cli@99.0.0"], ["/usr/bin/node", script, "--version"], ["/usr/bin/node", script, "mcp", "deploy", "--yes"]]);
     expect((await readUpdateCache(homeDir)).latest).toBe("99.0.0");
   });
 

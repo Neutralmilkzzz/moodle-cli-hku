@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { MoodleGateway } from "../src/mcp/gateway.js";
 import { LEGACY_PROTOCOL_VERSION, MODERN_PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS } from "../src/mcp/protocol.js";
 import { createMoodleMcpServer, TOOL_OUTPUT_SCHEMAS } from "../src/mcp/server.js";
+import { createHkuMcpTools } from "../src/mcp/hku-tools.js";
 import { UsageError } from "../src/errors.js";
 import { readableToolResult, smokeMoodleUser } from "../src/mcp/deployment/node-adapters.js";
 
@@ -118,6 +119,27 @@ describe("Moodle MCP server", () => {
 
     const legacy = await server.handle({ jsonrpc: "2.0", id: "init", method: "initialize", params: { protocolVersion: LEGACY_PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: "vitest", version: "1.0.0" } } });
     expect((legacy as { result: { instructions: string } }).result.instructions).toContain("submit");
+  });
+
+  it("lists and invokes local mail and library tools alongside Moodle", async () => {
+    const tools = createHkuMcpTools({ homeDir: "/tmp/hku-mcp-tools" });
+    expect(tools.map(tool => tool.name)).toEqual([
+      "mail_inbox",
+      "mail_read",
+      "mail_attachments",
+      "mail_send",
+      "library_facilities",
+      "library_slots",
+      "library_bookings",
+      "library_book",
+      "library_cancel",
+    ]);
+    const server = createMoodleMcpServer(fakeGateway(), { extraTools: tools });
+    const listed = await server.handle({ jsonrpc: "2.0", id: "tools", method: "tools/list", params: modernParams() });
+    const names = (listed as { result: { tools: Array<{ name: string }> } }).result.tools.map(tool => tool.name);
+    expect(names).toEqual(expect.arrayContaining(["home", "library_slots", "mail_inbox"]));
+    const mailSend = tools.find(tool => tool.name === "mail_send");
+    expect(mailSend?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
   });
 
   it("keeps the reason when a submission is refused", async () => {

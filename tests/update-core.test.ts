@@ -30,6 +30,6 @@ describe("update-core", () => {
   });
 
   it("names the command in the hint", () => {
-    expect(updateHint("0.9.2", "0.9.3")).toBe("moodle-cli 0.9.3 is available (running 0.9.2). Run: moodle update");
+    expect(updateHint("0.9.2", "0.9.3")).toBe("hku-cli 0.9.3 is available (running 0.9.2). Run: hku update");
   });
 });

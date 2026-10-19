@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -5,7 +7,10 @@ import {
   buildBookingConfirmationSubmission,
   buildBookingSubmission,
   buildBookingUrl,
+  buildCancellationRequest,
+  cancellationMatches,
   confirmationMatches,
+  parseBookingCancelTargets,
   parseBookingForm,
   parseBookingRecords,
   parseBookingUrl,
@@ -14,6 +19,28 @@ import {
 } from "../src/library-core.js";
 
 describe("HKU Library core", () => {
+  it("keeps parsing the captured HKUL pages", async () => {
+    const [availabilityHtml, bookingHtml] = await Promise.all([
+      readFile("tests/fixtures/hku-library/facility-status-chiwah.html", "utf8"),
+      readFile("tests/fixtures/hku-library/booking-record.html", "utf8"),
+    ]);
+    const availability = parseLibraryAvailabilityPage(
+      availabilityHtml,
+      "https://booking.lib.hku.hk/Secure/FacilityStatusDate.aspx",
+    );
+    expect(availability).toMatchObject({ page: 2, page_count: 2 });
+    expect(availability.slots).toHaveLength(2);
+    const targets = parseBookingCancelTargets(bookingHtml);
+    expect(targets).toHaveLength(1);
+    expect(targets[0].record).toMatchObject({
+      location: "Chi Wah Learning Commons",
+      floor: "CPD-1",
+      facility: "Study Room 5",
+      start: "23:00",
+      end: "23:45",
+    });
+  });
+
   it("merges the official facility table with live availability counts", () => {
     const page = `
       <span id="Time">2026 Oct 19 14:00:00</span>
@@ -179,5 +206,28 @@ describe("HKU Library core", () => {
       facility: "Study Room 5",
       status: "Booked",
     }]);
+  });
+
+  it("builds an exact cancellation request and verifies its confirmation", () => {
+    const html = `
+      <form method="post">
+        <input type="hidden" name="__VIEWSTATE" value="state">
+        <table id="main_gvRecord"><tr><th></th><th>Start</th><th>End</th><th>Location</th><th>Floor</th><th>Facility</th><th>Status</th></tr>
+          <tr><td><input type="image" name="ctl00$main$gvRecord$ctl02$btnDelete" title="Cancel Booking"></td>
+          <td>2026-10-19 (Mon) 23:00</td><td>2026-10-19 (Mon) 23:45</td>
+          <td>Chi Wah Learning Commons</td><td>CPD-1</td><td>Study Room 5</td><td>Booked</td></tr>
+        </table>
+      </form>`;
+    const target = parseBookingCancelTargets(html)[0];
+    expect(target.cancel_control).toBe("ctl00$main$gvRecord$ctl02$btnDelete");
+    const request = buildCancellationRequest(html, target);
+    expect(request["ctl00$main$gvRecord$ctl02$btnDelete.x"]).toBe("0");
+    expect(request["ctl00$main$gvRecord$ctl02$btnDelete.y"]).toBe("0");
+    expect(cancellationMatches(`
+      <p>Are you sure to cancel the following booking?</p>
+      <p>Start Date/Time : 2026-10-19 (Mon) 23:00</p>
+      <p>End Date/Time : 2026-10-19 (Mon) 23:45</p>
+      <p>Location : Chi Wah Learning Commons CPD-1</p>
+      <p>Facility : Study Room 5</p>`, target.record)).toBe(true);
   });
 });

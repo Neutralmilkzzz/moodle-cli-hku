@@ -8,7 +8,7 @@ import { arch, homedir, platform } from "node:os";
 import { join } from "node:path";
 import { CONFIG_DIR_NAME } from "./constants.js";
 import { findExecutable, selfCommand, type SelfCommand } from "./mcp/self-command.js";
-import { fetchLatestVersion, GITHUB_RELEASES_URL, isNewerVersion, standaloneAssetUrl, standaloneUpdateHint, updateHint, UPDATE_CHECK_TTL_MS, UPDATE_RETRY_MS, type LatestVersionRecord } from "./update-core.js";
+import { fetchLatestVersion, GITHUB_RELEASES_URL, isNewerVersion, PACKAGE_NAME, standaloneAssetUrl, standaloneUpdateHint, updateHint, UPDATE_CHECK_TTL_MS, UPDATE_RETRY_MS, type LatestVersionRecord } from "./update-core.js";
 import { VERSION } from "./version.js";
 
 export const UPDATE_CACHE_FILENAME = "update-check.json";
@@ -112,7 +112,7 @@ export function detectInstallKind(argv: readonly string[] = process.argv, execPa
  * mirror that has not synced yet install an older build, which then fails the version check.
  */
 export function installCommand(kind: InstallKind, version: string, script?: string, host = platform()): SelfCommand | null {
-  const spec = `moodle-cli@${version}`;
+  const spec = `${PACKAGE_NAME}@${version}`;
   if (kind === "bun") return { command: findExecutable("bun") ?? "bun", args: ["add", "--global", spec] };
   if (kind !== "npm") return null;
   // The npm first on PATH can belong to another Node (nvm, Volta, Homebrew) and would
@@ -126,7 +126,10 @@ export function npmGlobalPrefix(script: string, host = platform()): string | und
   let path = script;
   try { path = realpathSync(script); } catch { /* Keep the unresolved path. */ }
   // Windows keeps global packages directly under the prefix; everywhere else under lib/.
-  const layout = host === "win32" ? /^(.+)[\\/]node_modules[\\/]moodle-cli[\\/]/u : /^(.+)[\\/]lib[\\/]node_modules[\\/]moodle-cli[\\/]/u;
+  // Also classify the path itself so cross-platform tests and remote filesystem paths do
+  // not apply Windows' layout merely because the current host is Windows.
+  const windowsPath = host === "win32" && (/^[A-Za-z]:[\\/]/u.test(path) || path.includes("\\"));
+  const layout = windowsPath ? /^(.+)[\\/]node_modules[\\/](?:hku-cli|moodle-cli)[\\/]/u : /^(.+)[\\/]lib[\\/]node_modules[\\/](?:hku-cli|moodle-cli)[\\/]/u;
   return layout.exec(path)?.[1];
 }
 

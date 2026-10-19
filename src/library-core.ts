@@ -59,6 +59,23 @@ export interface LibraryAvailabilityPage {
   slots: LibraryAvailableSlot[];
 }
 
+export interface LibraryBookingRecord {
+  date?: string;
+  time?: string;
+  start?: string;
+  end?: string;
+  location?: string;
+  floor?: string;
+  facility?: string;
+  status?: string;
+}
+
+export interface LibraryBookingCancelTarget {
+  index: number;
+  record: LibraryBookingRecord;
+  cancel_control: string;
+}
+
 export interface BookingFormPlan {
   form: ParsedHtmlForm;
   plan: BookingPlan;
@@ -395,22 +412,17 @@ export function bookingWasAccepted(html: string): boolean {
   return /your booking is successful|booking (?:was|is) successful|booking confirmed/iu.test(normalizedText(parse(html).textContent));
 }
 
-export function parseBookingRecords(html: string): Array<{
-  date?: string;
-  time?: string;
-  start?: string;
-  end?: string;
-  location?: string;
-  floor?: string;
-  facility?: string;
-  status?: string;
-}> {
+export function parseBookingRecords(html: string): LibraryBookingRecord[] {
+  return parseBookingCancelTargets(html).map(target => target.record);
+}
+
+export function parseBookingCancelTargets(html: string): LibraryBookingCancelTarget[] {
   const root = parse(html);
   const table = root.querySelector("#main_gvRecord");
   if (!table) throw new NotFoundError("The HKUL booking record table was not found.");
   const rows = table.querySelectorAll("tr");
-  const records: ReturnType<typeof parseBookingRecords> = [];
-  for (const row of rows.slice(1)) {
+  const targets: LibraryBookingCancelTarget[] = [];
+  for (const [index, row] of rows.slice(1).entries()) {
     const cells = row.querySelectorAll("td").map(text);
     if (cells.length < 7) continue;
     const startText = cells[1] || "";
@@ -419,18 +431,50 @@ export function parseBookingRecords(html: string): Array<{
       || endText.match(/\b\d{4}-\d{2}-\d{2}\b/u)?.[0];
     const start = startText.match(/\b\d{2}:\d{2}\b/u)?.[0];
     const end = endText.match(/\b\d{2}:\d{2}\b/u)?.[0];
-    records.push({
-      ...(date ? { date } : {}),
-      ...(start && end ? { time: `${start} - ${end}` } : {}),
-      ...(start ? { start } : {}),
-      ...(end ? { end } : {}),
-      ...(cells[3] ? { location: cells[3] } : {}),
-      ...(cells[4] ? { floor: cells[4] } : {}),
-      ...(cells[5] ? { facility: cells[5] } : {}),
-      ...(cells[6] ? { status: cells[6] } : {}),
+    const cancel = row.querySelector('input[type="image"][title="Cancel Booking"]');
+    targets.push({
+      index,
+      record: {
+        ...(date ? { date } : {}),
+        ...(start && end ? { time: `${start} - ${end}` } : {}),
+        ...(start ? { start } : {}),
+        ...(end ? { end } : {}),
+        ...(cells[3] ? { location: cells[3] } : {}),
+        ...(cells[4] ? { floor: cells[4] } : {}),
+        ...(cells[5] ? { facility: cells[5] } : {}),
+        ...(cells[6] ? { status: cells[6] } : {}),
+      },
+      cancel_control: cancel?.getAttribute("name") || "",
     });
   }
-  return records;
+  return targets;
+}
+
+export function buildCancellationRequest(
+  html: string,
+  target: LibraryBookingCancelTarget,
+): Record<string, string> {
+  if (!target.cancel_control) {
+    throw new UsageError("The selected HKUL booking has no cancellation control.");
+  }
+  const form = parseHtmlForm(html);
+  return serializeHtmlForm(form, {
+    [`${target.cancel_control}.x`]: "0",
+    [`${target.cancel_control}.y`]: "0",
+  });
+}
+
+export function cancellationMatches(html: string, record: LibraryBookingRecord): boolean {
+  const value = parse(html).textContent.replace(/\s+/gu, " ").trim().toLowerCase();
+  if (!/are you sure to cancel the following booking/iu.test(value)) return false;
+  const expected = [
+    record.start,
+    record.end,
+    record.location,
+    record.floor,
+    record.facility,
+  ].filter((item): item is string => Boolean(item));
+  return expected.every(item => value.includes(item.toLowerCase()));
 }
 
 export function serializeHtmlForm(form: ParsedHtmlForm, overrides: Record<string, string> = {}): Record<string, string> {
@@ -486,7 +530,9 @@ export function parseHtmlForm(html: string, allowFragment = false): ParsedHtmlFo
       type,
       name,
       id,
-      value: tag === "textarea" ? node.textContent : (node.getAttribute("value") ?? ""),
+      value: tag === "select"
+        ? (options.find(option => option.selected)?.value ?? options[0]?.value ?? "")
+        : tag === "textarea" ? node.textContent : (node.getAttribute("value") ?? ""),
       checked: node.hasAttribute("checked"),
       disabled: node.hasAttribute("disabled"),
       options,

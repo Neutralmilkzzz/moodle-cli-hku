@@ -1,6 +1,6 @@
-export const PACKAGE_NAME = "moodle-cli";
+export const PACKAGE_NAME = "hku-cli";
 export const NPM_LATEST_URL = `https://registry.npmjs.org/${PACKAGE_NAME}/latest`;
-export const GITHUB_RELEASES_URL = "https://github.com/bunizao/moodle-cli/releases/latest";
+export const GITHUB_RELEASES_URL = "https://github.com/Neutralmilkzzz/moodle-cli-hku/releases/latest";
 
 export const AJAX_SERVICE_PATH = "/lib/ajax/service.php";
 export const DASHBOARD_PATH = "/my/";

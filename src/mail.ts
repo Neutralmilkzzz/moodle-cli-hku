@@ -1,12 +1,14 @@
 import { AuthError } from "./errors.js";
 import {
   createMailConfig,
+  getMailAttachments,
   getMailMessage,
   listMailMessages,
   sendMail,
   verifyMailLogin,
   verifyMailSendLogin,
   type MailConfig,
+  type MailAttachment,
   type MailMessage,
   type MailMessageSummary,
   type SendMailInput,
@@ -91,6 +93,7 @@ export async function listHkuMail(
     limit?: number;
     unread?: boolean;
     search?: string;
+    searchBody?: boolean;
     since?: Date;
   } = {},
 ): Promise<MailMessageSummary[]> {
@@ -99,6 +102,7 @@ export async function listHkuMail(
     limit: options.limit,
     unread: options.unread,
     search: options.search,
+    searchBody: options.searchBody,
     since: options.since,
   });
 }
@@ -108,6 +112,13 @@ export async function readHkuMail(
   options: MailServiceOptions = {},
 ): Promise<MailMessage> {
   return getMailMessage(await storedMailConfig(options), uid);
+}
+
+export async function readHkuMailAttachments(
+  uid: string,
+  options: MailServiceOptions = {},
+): Promise<MailAttachment[]> {
+  return getMailAttachments(await storedMailConfig(options), uid);
 }
 
 export async function sendHkuMail(
@@ -121,7 +132,7 @@ export async function logoutHkuMail(options: MailServiceOptions = {}): Promise<v
   await deleteSecureState(MAIL_STATE_NAME, secureOptions(options));
 }
 
-async function storedMailConfig(options: MailServiceOptions): Promise<MailConfig> {
+export async function storedMailConfig(options: MailServiceOptions): Promise<MailConfig> {
   const env = options.env ?? process.env;
   if (env.HKU_MAIL_USERNAME && env.HKU_MAIL_AUTH_CODE) {
     return createMailConfig(env.HKU_MAIL_USERNAME, env.HKU_MAIL_AUTH_CODE, env);

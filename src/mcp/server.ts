@@ -45,8 +45,14 @@ export const TOOL_CATALOG = Object.entries(intentContracts).map(([name, contract
 }));
 
 // The remote Worker has no filesystem, so it never lists the upload tool.
-function toolsFor(gateway: MoodleGateway) {
-  return gateway.submitAssignment ? TOOL_CATALOG : TOOL_CATALOG.filter(tool => !WRITE_TOOLS.has(tool.name));
+function toolsFor(gateway: MoodleGateway, extraTools: readonly McpExtraTool[] = []) {
+  const moodleTools = gateway.submitAssignment ? TOOL_CATALOG : TOOL_CATALOG.filter(tool => !WRITE_TOOLS.has(tool.name));
+  return [...moodleTools, ...extraTools.map(tool => ({
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+    annotations: tool.annotations,
+  }))];
 }
 
 // Results are parsed against the contract before they are sent, so publishing the
@@ -66,6 +72,19 @@ export interface MoodleMcpServerOptions {
   instructions?: string[];
   /** Where a remote owner signs in to Moodle; auth errors point here instead of the CLI. */
   signInUrl?: string;
+  /** Local-only tools such as mail and HKU facilities. */
+  extraTools?: readonly McpExtraTool[];
+}
+
+export interface McpExtraTool {
+  name: string;
+  description: string;
+  inputSchema: unknown;
+  annotations: Record<string, unknown>;
+  call(args: Record<string, unknown>): Promise<{
+    structuredContent: Record<string, unknown>;
+    payload?: unknown;
+  }>;
 }
 
 export interface MoodleMcpServer {
@@ -120,13 +139,13 @@ export function createMoodleMcpServer(
         }
         if (request.method === "tools/list") {
           return jsonRpcSuccess(id, {
-            tools: toolsFor(gateway),
+            tools: toolsFor(gateway, options.extraTools),
             resultType: "complete",
             _meta: RESULT_META,
           });
         }
         if (request.method === "tools/call") {
-          return jsonRpcSuccess(id, await callTool(gateway, request.params, options.signInUrl));
+          return jsonRpcSuccess(id, await callTool(gateway, request.params, options.signInUrl, options.extraTools));
         }
         return jsonRpcFailure(id, { code: -32601, message: `Method not found: ${request.method}` });
       } catch (error) {
@@ -173,8 +192,45 @@ export function createMoodleMcpServer(
   };
 }
 
-async function callTool(gateway: MoodleGateway, params: Record<string, unknown> | undefined, signInUrl?: string): Promise<Record<string, unknown>> {
+async function callTool(
+  gateway: MoodleGateway,
+  params: Record<string, unknown> | undefined,
+  signInUrl?: string,
+  extraTools: readonly McpExtraTool[] = [],
+): Promise<Record<string, unknown>> {
   const requested = typeof params?.name === "string" ? params.name : "";
+  const extra = extraTools.find(tool => tool.name === requested);
+  if (extra) {
+    const raw = params?.arguments ?? {};
+    if (!isRecord(raw)) throw new McpCallError("INVALID_TOOL_ARGUMENTS", "Tool arguments must be an object.");
+    try {
+      const result = await extra.call(raw);
+      return {
+        content: toolContent(requested, result.payload, result.structuredContent),
+        structuredContent: result.structuredContent,
+        resultType: "complete",
+        _meta: RESULT_META,
+      };
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return {
+          content: [{ type: "text", text: JSON.stringify({ error: { type: "INVALID_TOOL_ARGUMENTS", message: `Invalid arguments for ${requested}.`, issues: error.issues } }) }],
+          structuredContent: { error: { type: "INVALID_TOOL_ARGUMENTS", message: `Invalid arguments for ${requested}.`, issues: error.issues } },
+          isError: true,
+          resultType: "complete",
+          _meta: RESULT_META,
+        };
+      }
+      const mapped = mapExtraToolError(error);
+      return {
+        content: [{ type: "text", text: JSON.stringify({ error: mapped }) }],
+        structuredContent: { error: mapped },
+        isError: true,
+        resultType: "complete",
+        _meta: RESULT_META,
+      };
+    }
+  }
   const name = Object.hasOwn(aliases, requested) ? aliases[requested]! : requested;
   if (!Object.hasOwn(intentContracts, name) && !["get_user", "list_activities", "list_forums"].includes(name)) throw new McpCallError("TOOL_NOT_FOUND", `Unknown Moodle tool: ${requested || "<missing>"}`);
   if (WRITE_TOOLS.has(name) && !gateway.submitAssignment) throw new McpCallError("TOOL_NOT_FOUND", `${requested} is only available on a local MCP server with access to the files.`);
@@ -278,6 +334,20 @@ function mapMoodleError(error: unknown, verbatim = false, signInUrl?: string): {
     return { type, message: own ?? message, hint: ownHint ?? recovery.hint, recovery: recovery.recovery, ...(moodleCode ? { moodleCode } : {}) };
   }
   return { type, message: own ?? message, hint: ownHint ?? "Run moodle doctor, or refine the request using units and find.", ...(moodleCode ? { moodleCode } : {}) };
+}
+
+function mapExtraToolError(error: unknown): { type: string; message: string; hint?: string } {
+  const record = isRecord(error) ? error : {};
+  const code = typeof record.code === "string" ? record.code : "HKU_TOOL_ERROR";
+  const message = typeof record.message === "string" && record.message.trim()
+    ? record.message
+    : "The HKU service request could not be completed.";
+  const hint = typeof record.hint === "string" && record.hint.trim() ? record.hint : undefined;
+  return {
+    type: code.startsWith("HKU_") ? code : `HKU_${code.toUpperCase()}`,
+    message,
+    ...(hint ? { hint } : {}),
+  };
 }
 
 class McpCallError extends Error {
